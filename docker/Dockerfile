@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM python:3.12-slim
 
 # Ignore all interactive dialog during apt-get update
 ENV DEBIAN_FRONTEND=noninteractive
