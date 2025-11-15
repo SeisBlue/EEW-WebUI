@@ -1,0 +1,17 @@
+cython
+discord
+discord-webhook
+fastapi
+flask-cors
+flask-socketio
+loguru
+matplotlib
+netCDF4
+numpy
+paho-mqtt
+pandas
+plotly
+redis
+scipy
+tqdm
+xarray

@@ -1,0 +1,9 @@
+earthworm_*/
+misc/
+wavefile/
+logs/
+pick_ew_new/
+pick_params/
+params/pfile*
+.DS_Store
+.idea

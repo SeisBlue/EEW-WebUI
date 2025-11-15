@@ -1,0 +1,288 @@
+.taiwan-map-deck-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-height: 300px;
+  background: var(--color-bg-base);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* Deck.gl Canvas 容器 */
+.deck-container,
+.deck-canvas {
+  border-radius: var(--radius-md);
+}
+
+/* Mapbox GL 控制項 */
+.mapboxgl-ctrl-group {
+  background-color: var(--color-bg-glass-active) !important;
+  border: 1px solid var(--color-border-base) !important;
+}
+
+.mapboxgl-ctrl-group button {
+  background-color: var(--color-bg-glass-active) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.mapboxgl-ctrl-group button:hover {
+  background-color: var(--color-primary-dark) !important;
+  color: var(--color-text-primary) !important;
+}
+
+/* Hover Tooltip */
+.deck-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1000;
+  background: var(--color-bg-glass-active);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-sm);
+  padding: 0;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: var(--backdrop-blur);
+  transform: translate(-50%, -120%);
+}
+
+.deck-tooltip .tooltip-content {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  color: var(--color-text-primary);
+  min-width: 120px;
+}
+
+.deck-tooltip .tooltip-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 3px;
+  color: var(--color-text-primary);
+}
+
+.deck-tooltip .tooltip-code {
+  font-size: 0.6rem;
+  color: var(--color-text-secondary);
+  font-family: monospace;
+  margin-bottom: 3px;
+}
+
+.deck-tooltip .tooltip-coords {
+  font-size: 0.55rem;
+  color: var(--color-text-muted);
+}
+
+.deck-tooltip .tooltip-status {
+  font-size: 0.55rem;
+  margin-top: var(--spacing-xs);
+}
+
+.deck-tooltip .tooltip-hint {
+  font-size: 0.55rem;
+  color: var(--color-warning);
+  margin-top: var(--spacing-xs);
+  font-style: italic;
+}
+
+.tooltip-intensity {
+  font-size: 13px;
+  font-weight: bold;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.tooltip-replacement {
+  color: var(--green-50);
+  font-size: 12px;
+  margin-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--green-50) 30%, transparent);
+  padding-top: 4px;
+}
+
+.tooltip-replacement-distance {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+
+/* 選中測站面板（與 TaiwanMap.css 保持一致）*/
+.selected-stations-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: var(--color-bg-glass-active);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
+  max-width: 250px;
+  z-index: 1000;
+  backdrop-filter: var(--backdrop-blur);
+  box-shadow: var(--shadow-lg);
+}
+
+.selected-stations-panel h4 {
+  margin: 0 0 var(--spacing-xs) 0;
+  color: var(--color-warning);
+  font-size: 0.9rem;
+  font-weight: bold;
+}
+
+.selected-stations-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--spacing-xs);
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.selected-station-tag {
+  background: var(--color-warning);
+  color: var(--color-bg-dark);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: bold;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+
+.selected-station-tag:hover {
+  background: var(--color-warning-dark);
+}
+
+.clear-selection-btn {
+  width: 100%;
+  padding: 6px;
+  background: var(--color-danger);
+  color: var(--color-text-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.clear-selection-btn:hover {
+  background: var(--color-danger-dark);
+}
+
+/* 圖例樣式 */
+.map-legend {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  background: var(--color-bg-glass-active);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
+  z-index: 1000;
+  backdrop-filter: var(--backdrop-blur);
+  box-shadow: var(--shadow-lg);
+  transition: all var(--transition-normal);
+}
+
+.map-legend.collapsed {
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.legend-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: var(--spacing-xs);
+  user-select: none;
+  transition: color var(--transition-fast);
+}
+
+.legend-header:hover {
+  color: var(--color-primary-light);
+}
+
+.map-legend.collapsed .legend-header {
+  margin-bottom: 0;
+}
+
+.legend-header-title {
+  font-weight: bold;
+}
+
+.legend-header-arrow {
+  font-size: 12px;
+}
+
+.legend-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.legend-title:first-of-type {
+  margin-top: var(--spacing-xs);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  margin: 6px 0;
+  font-size: 0.75rem;
+  color: var(--color-text-primary);
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: var(--spacing-xs);
+  border: 1px solid transparent; /* 預設透明邊框 */
+}
+
+.legend-dot.small {
+  width: 6px;
+  height: 6px;
+}
+
+.legend-divider {
+  height: 1px;
+  background: var(--color-border-primary);
+  margin: 10px 0;
+}
+
+/* 震度圖例顏色 */
+.legend-level-0 { background-color: var(--intensity-0); border-color: var(--gray-30); }
+.legend-level-1 { background-color: var(--intensity-1); }
+.legend-level-2 { background-color: var(--intensity-2); }
+.legend-level-3 { background-color: var(--intensity-3); }
+.legend-level-4 { background-color: var(--intensity-4); }
+.legend-level-5-minus { background-color: var(--intensity-5-minus); }
+.legend-level-5-plus { background-color: var(--intensity-5-plus); }
+.legend-level-6-minus { background-color: var(--intensity-6-minus); }
+.legend-level-6-plus { background-color: var(--intensity-6-plus); }
+.legend-level-7 { background-color: var(--intensity-7); }
+.legend-level-unknown { background-color: var(--intensity-unknown); }
+
+/* 響應式 */
+@media (max-width: 768px) {
+  .map-legend {
+    bottom: 10px;
+    right: 10px;
+    font-size: 0.6rem;
+    padding: var(--spacing-xs);
+  }
+
+  .performance-badge {
+    top: 10px;
+    left: 10px;
+    font-size: 0.6rem;
+  }
+}
