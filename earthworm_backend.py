@@ -8,7 +8,6 @@ import time
 from datetime import datetime
 
 import numpy as np
-import paho.mqtt.client as mqtt
 import pandas as pd
 import PyEW
 import torch
@@ -28,10 +27,7 @@ manager = mp.Manager()
 wave_buffer = manager.dict()
 wave_queue = manager.Queue()
 pick_buffer = manager.dict()
-event_queue = manager.Queue()
-dataset_queue = manager.Queue()
 report_queue = manager.Queue()
-discord_queue = manager.Queue()
 wave_endt = manager.Value("d", 0)
 wave_speed_count = manager.Value("i", 0)
 
@@ -48,200 +44,6 @@ subscribed_stations = {}  # {session_id: set(station_codes)}
 """
 Web Server
 """
-
-
-@app.route("/api/get_file_content")
-def get_file_content():
-    report_log_dir = "/workspace/logs/report"
-    file_name = request.args.get("file")
-    if not file_name.startswith("report"):
-        return "Invalid file type", 400
-
-    if not file_name.endswith(".log"):
-        return "Invalid file type", 400
-
-    # 檢查文件名是否包含相對路徑
-    if ".." in file_name or "/" in file_name or "\\" in file_name:
-        return "Invalid file name", 400
-
-    try:
-        file_path = os.path.join(report_log_dir, file_name)
-        with open(file_path, "r", encoding="utf-8") as file:
-            content = file.read()
-        return content
-
-    except Exception as e:
-        return str(e), 500
-
-
-@app.route("/api/stations")
-def get_stations():
-    """API: 取得測站列表（JSON格式）"""
-    try:
-        return (
-            json.dumps(target_dict, ensure_ascii=False),
-            200,
-            {"Content-Type": "application/json; charset=utf-8"},
-        )
-    except Exception as e:
-        logger.error(f"Error getting stations: {e}")
-        return (
-            json.dumps({"error": str(e)}),
-            500,
-            {"Content-Type": "application/json; charset=utf-8"},
-        )
-
-
-@app.route("/api/all-stations")
-def get_all_stations():
-    """API: 取得所有測站列表（用於測站替換功能的經緯度查找）"""
-    try:
-        return (
-            json.dumps(all_stations_dict, ensure_ascii=False),
-            200,
-            {"Content-Type": "application/json; charset=utf-8"},
-        )
-    except Exception as e:
-        logger.error(f"Error getting all stations: {e}")
-        return (
-            json.dumps({"error": str(e)}),
-            500,
-            {"Content-Type": "application/json; charset=utf-8"},
-        )
-
-
-@app.route("/api/reports")
-def get_reports():
-    """API: 取得歷史預測報告列表（JSON格式）"""
-    try:
-        report_log_dir = "/workspace/logs/report"
-        files = []
-        if os.path.exists(report_log_dir):
-            for f in os.listdir(report_log_dir):
-                file_path = os.path.join(report_log_dir, f)
-                if (
-                    f.startswith("report")
-                    and f.endswith(".log")
-                    and os.path.isfile(file_path)
-                ):
-                    # 獲取文件修改時間
-                    mtime = os.path.getmtime(file_path)
-                    files.append(
-                        {
-                            "filename": f,
-                            "timestamp": mtime,
-                            "datetime": datetime.fromtimestamp(mtime).strftime(
-                                "%Y-%m-%d %H:%M:%S"
-                            ),
-                        }
-                    )
-
-        # 按時間倒序排列
-        files.sort(key=lambda x: x["timestamp"], reverse=True)
-
-        return (
-            json.dumps(files, ensure_ascii=False),
-            200,
-            {"Content-Type": "application/json; charset=utf-8"},
-        )
-    except Exception as e:
-        logger.error(f"Error getting reports: {e}")
-        return (
-            json.dumps({"error": str(e)}),
-            500,
-            {"Content-Type": "application/json; charset=utf-8"},
-        )
-
-
-@app.route("/api/find-nearest-station")
-def find_nearest_station():
-    """API: 根據經緯度查找最近的測站
-    參數:
-        lat: 緯度
-        lon: 經度
-        exclude_pattern: 排除的測站格式 (可選，例如 "CWASN" 排除非 Axxx/Bxxx/Cxxx 格式)
-        max_count: 返回最近的 N 個測站 (預設 1)
-    """
-    try:
-        lat = float(request.args.get("lat"))
-        lon = float(request.args.get("lon"))
-        exclude_pattern = request.args.get("exclude_pattern", None)
-        max_count = int(request.args.get("max_count", 1))
-
-        if not all_stations_dict:
-            return (
-                json.dumps({"error": "No stations available"}),
-                404,
-                {"Content-Type": "application/json; charset=utf-8"},
-            )
-
-        # 過濾測站
-        filtered_stations = all_stations_dict
-        if exclude_pattern == "CWASN":
-            import re
-
-            tsmip_pattern = re.compile(r"^[ABCDEFGH]\d{3}$")
-            filtered_stations = [
-                s
-                for s in all_stations_dict
-                if tsmip_pattern.match(s.get("station", ""))
-            ]
-
-        if not filtered_stations:
-            return (
-                json.dumps({"error": "No matching stations found"}),
-                404,
-                {"Content-Type": "application/json; charset=utf-8"},
-            )
-
-        # 計算距離並排序
-        def haversine_distance(lat1, lon1, lat2, lon2):
-            """計算兩點間的距離（公里）"""
-            from math import asin, cos, radians, sin, sqrt
-
-            lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-            dlon = lon2 - lon1
-            dlat = lat2 - lat1
-            a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
-            c = 2 * asin(sqrt(a))
-            km = 6371 * c
-            return km
-
-        stations_with_distance = []
-        for station in filtered_stations:
-            station_lat = station.get("latitude")
-            station_lon = station.get("longitude")
-            if station_lat is not None and station_lon is not None:
-                distance = haversine_distance(lat, lon, station_lat, station_lon)
-                stations_with_distance.append(
-                    {**station, "distance_km": round(distance, 2)}
-                )
-
-        # 按距離排序
-        stations_with_distance.sort(key=lambda x: x["distance_km"])
-
-        # 返回最近的 N 個測站
-        result = stations_with_distance[:max_count]
-
-        return (
-            json.dumps(result, ensure_ascii=False),
-            200,
-            {"Content-Type": "application/json; charset=utf-8"},
-        )
-
-    except ValueError as e:
-        return (
-            json.dumps({"error": f"Invalid parameters: {str(e)}"}),
-            400,
-            {"Content-Type": "application/json; charset=utf-8"},
-        )
-    except Exception as e:
-        logger.error(f"Error finding nearest station: {e}")
-        return (
-            json.dumps({"error": str(e)}),
-            500,
-            {"Content-Type": "application/json; charset=utf-8"},
-        )
 
 
 @socketio.on("connect")
@@ -819,17 +621,6 @@ def lowpass(data, freq=10, df=100, corners=4):
     return sosfilt(sos, data)
 
 
-def get_vs30(lat, lon):
-    try:
-        distance, i = tree.query([float(lat), float(lon)])
-        vs30 = vs30_table.iloc[i]["Vs30"]
-        return float(vs30)
-
-    except Exception as e:
-        logger.error(
-            f"get_vs30 error: {e}",
-        )
-
 
 def get_station_position(station):
     try:
@@ -996,128 +787,6 @@ def loading_animation(pick_threshold):
         sys.stdout.flush()
         time.sleep(0.1)
 
-
-def model_inference():
-    """
-    進行模型預測
-    """
-    from ttsam_model import get_full_model
-    full_model = get_full_model(model_path)
-
-    pick_threshold = 5
-
-    report_log_file = None
-    while True:
-        # 小於 5 個測站不觸發模型預測
-        if len(pick_buffer) < pick_threshold:
-            if report_log_file:
-                report_log_file.close()
-
-            # 重置 report_log_file
-            report_log_file = None
-            loading_animation(pick_threshold)
-            continue
-
-        if len(pick_buffer) >= pick_threshold:
-            if not report_log_file:
-                # 當觸發模型預測時，開始記錄 log
-                # 取得第一個 pick 的時間
-                event_first_pick = list(pick_buffer.values())[0]
-                first_pick_timestring = datetime.fromtimestamp(
-                    float(event_first_pick["pick_time"]),
-                ).strftime("%Y%m%d_%H%M%S")
-
-                # 以第一個 pick 的時間為 report log 檔案名稱
-                report_log_file = (
-                    f"/workspace/logs/report/report_{first_pick_timestring}.log"
-                )
-                os.makedirs(os.path.dirname(report_log_file), exist_ok=True)
-                logger.info(f"create report log file {report_log_file}")
-                report_log_file = open(report_log_file, "w+")
-
-                pick_log_file = f"/workspace/logs/pick/pick_{first_pick_timestring}.log"
-                os.makedirs(os.path.dirname(pick_log_file), exist_ok=True)
-                logger.info(f"create pick log file {pick_log_file}")
-                pick_log_file = open(pick_log_file, "w+")
-
-        try:
-            pick_count = len(pick_buffer)
-            print(f"{pick_count} picks in window, model inference start")
-            sys.stdout.flush()
-
-            wave_endtime = wave_endt.value  # 獲得最新的 wave 結束時間
-            inference_start_time = time.time()
-
-            event_data = event_cutter(pick_buffer)
-            dataset = convert_dataset(event_data)
-            dataset = get_target_dataset(dataset)
-
-            # 模型預測所有 target
-            for batch in dataset_batch(dataset):
-                wave = np.array(batch["waveform"])
-                wave_transposed = wave.transpose(0, 2, 1)
-
-                batch_waveform = prepare_tensor(wave_transposed, (25, 3000, 3), 25)
-                batch_station = prepare_tensor(batch["station"], (25, 4), 25)
-                batch_target = prepare_tensor(batch["target"], (25, 4), 25)
-
-                tensor = {
-                    "waveform": batch_waveform,
-                    "station": batch_station,
-                    "station_name": batch["station_name"],
-                    "target": batch_target,
-                    "target_name": batch["target_name"],
-                }
-
-                # 模型預測
-                weight, sigma, mu = full_model(tensor)
-                pga_list = get_average_pga(weight, sigma, mu)
-                dataset["pga"].extend(pga_list)
-
-            dataset["intensity"] = [
-                calculate_intensity(pga, label=True) for pga in dataset["pga"]
-            ]
-
-            # 產生報告
-            report = {"picks": len(pick_buffer), "log_time": "", "alarm": []}
-            for i, target_name in enumerate(dataset["target_name"]):
-                intensity = dataset["intensity"][i]
-                report[f"{target_name}"] = intensity
-
-                if intensity in ["4", "5-", "5+", "6-", "6+", "7"]:
-                    # 過預警門檻值的測站
-                    report["alarm"].append(target_name)
-
-            inference_end_time = time.time()
-            report["report_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            report["format_time"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-            report["wave_time"] = wave_endtime - float(event_first_pick["pick_time"])
-            report["wave_endt"] = datetime.fromtimestamp(float(wave_endtime)).strftime(
-                "%Y-%m-%d %H:%M:%S.%f"
-            )
-            report["wave_lag"] = inference_end_time - wave_endtime
-            report["run_time"] = inference_end_time - inference_start_time
-            # log_time 加上 2 秒為 pick msg 的 upsec 2 秒
-            report["log_time"] = (
-                f"{inference_end_time - event_first_pick['sys_time'] + 2:.4f}"
-                # upsec 2 sec
-            )
-            report_queue.put(report)
-            report_log_file.write(json.dumps(report) + "\n")
-
-            pick_log = {
-                "log_time": report["log_time"],
-                "picks": list(pick_buffer.values()),
-            }
-            pick_log_file.write(json.dumps(pick_log) + "\n")
-
-            # 資料傳至前端
-            dataset_queue.put(dataset)
-        except Exception as e:
-            logger.error(f"model_inference error: {e}")
-            continue
-
-
 def convert_intensity(value):
     if value.endswith("+"):
         return float(value[:-1]) + 0.25
@@ -1234,60 +903,9 @@ def format_earthquake_report(raw_report):
     return "\n".join(report_lines)
 
 
-def send_discord():
-    proxies = {}
-    try:
-        proxies = config["discord"]["proxies"]
-    except KeyError:
-        logger.debug("discord_webhook no proxy")
-
-    webhook_url = config["discord"]["webhook_url"]
-    webhook = DiscordWebhook(url=webhook_url)
-
-    if proxies:
-        webhook.set_proxies(proxies)
-        logger.info("discord_webhook proxies set")
-
-    if args.discord:
-        embed = DiscordEmbed(title="Server start", color="2196F3")
-        embed.set_timestamp()
-        webhook.add_embed(embed)
-
-        response = webhook.execute()
-        logger.debug(response)
-
-        webhook.remove_embeds()
-
-    while True:
-        try:
-            report = discord_queue.get()
-
-            context = {
-                "title": "地震預警",
-                "description": report,
-                "color": "FF5722",
-            }
-
-            embed = DiscordEmbed(**context)
-            webhook.add_embed(embed)
-
-            if args.discord:
-                response = webhook.execute()
-                logger.debug(response)
-
-            webhook.remove_embeds()
-
-        except Exception as e:
-            logger.error(f"send_discord error: {e}")
-            print(e)
-
-
 if __name__ == "__main__":
     logger.info("TTSAM Realtime Start")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mqtt", action="store_true", help="connect to mqtt broker")
-    parser.add_argument("--discord", action="store_true", help="connect to discord bot")
-    parser.add_argument("--web", action="store_true", help="run web server")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="web server ip")
     parser.add_argument("--port", type=int, default=5001, help="web server port")
     parser.add_argument(
@@ -1407,24 +1025,8 @@ if __name__ == "__main__":
 
     logger.info(f"{args.env} env, inst_id = {earthworm_param[args.env]['inst_id']}")
 
-    if args.mqtt:
-        username = config["mqtt"]["username"]
-        password = config["mqtt"]["password"]
-        host = config["mqtt"]["host"]
-        port = config["mqtt"]["port"]
-        topic = config["mqtt"]["topic"]
 
-        mqtt_client = mqtt.Client()
-        mqtt_client.username_pw_set(username, password)
-        mqtt_client.connect(host=host, port=port)
-
-    processes.append(mp.Process(target=model_inference))
     processes.append(mp.Process(target=reporter))
-
-    if args.discord:
-        processes.append(mp.Process(target=send_discord))
-    if args.web:
-        processes.append(mp.Process(target=web_server))
 
     for p in processes:
         p.start()
