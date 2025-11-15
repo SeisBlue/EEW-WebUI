@@ -15,8 +15,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
 
 # Install python package
 COPY docker/requirements.txt /tmp/
-RUN python3 -m pip install --upgrade pip; \
-    python3 -m pip --no-cache-dir install -r /tmp/requirements.txt;
+RUN python -m pip install --upgrade pip; \
+    python -m pip --no-cache-dir install -r /tmp/requirements.txt;
 
 # Get Earthworm
 RUN mkdir -p /opt/earthworm /opt/earthworm/run/params /opt/earthworm/run/logs &&  \
@@ -31,4 +31,4 @@ ENV EW_VERSION="8.0"
 ENV EW_HOME=/opt/earthworm/earthworm_8.0
 ENV EW_PARAMS=/opt/earthworm/run/params
 ENV CFLAGS="-fno-stack-protector -fPIC -Dlinux -D_LINUX -D_USE_SCHED -D_USE_PTHREADS -D_USE_TERMIOS -I${EW_HOME}/include"
-RUN python3 -m pip install git+https://github.com/Boritech-Solutions/PyEarthworm
+RUN python -m pip install git+https://github.com/Boritech-Solutions/PyEarthworm
