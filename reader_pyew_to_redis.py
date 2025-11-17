@@ -21,7 +21,7 @@ import logging
 from typing import Tuple
 
 import numpy as np
-import redis
+import redis.asyncio as aioredis
 
 try:
     import PyEW
@@ -36,7 +36,7 @@ BATCH_TIMEOUT = float(os.getenv("BATCH_TIMEOUT", "0.05"))
 EW_DEF_RING = int(os.getenv("EW_DEF_RING", "1000"))
 EW_MOD = int(os.getenv("EW_MOD", "2"))
 EW_INST = int(os.getenv("EW_INST", "255"))
-EW_RINGS = os.getenv("EW_RINGS", "1000, 1030, 1005, 1035")  # e.g. "1034,1000"
+EW_RINGS = os.getenv("EW_RINGS", "1000, 1034")  # e.g. "1034,1000"
 
 LOGLEVEL = os.getenv("LOGLEVEL", "INFO")
 logging.basicConfig(level=LOGLEVEL)
