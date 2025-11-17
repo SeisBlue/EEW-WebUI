@@ -1,3 +1,4 @@
+docker container rm -f earthworm
 docker run \
 -it \
 --rm \
