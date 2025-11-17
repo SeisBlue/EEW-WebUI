@@ -6,13 +6,13 @@ import sys
 import threading
 import time
 from datetime import datetime
+from typing import List, Set
 
 import numpy as np
 import pandas as pd
 import PyEW
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi_socketio import SocketManager
 from scipy.signal import detrend, iirfilter, sosfilt, zpk2sos
 from loguru import logger
 
@@ -35,47 +35,73 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# SocketIO 的 CORS（獨立處理 WebSocket）
-socket_manager = SocketManager(app=app, cors_allowed_origins="*")
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+        self.subscribed_stations: dict[WebSocket, Set[str]] = {}
 
-# 訂閱管理：追蹤每個客戶端訂閱的測站
-subscribed_stations = {}  # {session_id: set(station_codes)}
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        self.subscribed_stations[websocket] = set()
+        logger.info(f"📡 Client {websocket.client.host} connected")
 
-"""
-Web Server
-"""
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+        if websocket in self.subscribed_stations:
+            del self.subscribed_stations[websocket]
+        logger.info(f"🔌 Client {websocket.client.host} disconnected")
+
+    def subscribe(self, websocket: WebSocket, stations: List[str]):
+        if stations:
+            self.subscribed_stations[websocket] = set(stations)
+            logger.info(
+                f"📡 Client {websocket.client.host} subscribed to {len(stations)} stations"
+            )
+        else:
+            self.subscribed_stations[websocket] = set()
+            logger.info(f"📡 Client {websocket.client.host} unsubscribed from all stations")
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
+
+    async def send_to_subscribed(self, message: dict):
+        wave_packet = message.get("data", {})
+        for websocket, subscribed in self.subscribed_stations.items():
+            if not subscribed:
+                continue
+
+            filtered_batch = {
+                wave_id: wave_data
+                for wave_id, wave_data in wave_packet.items()
+                if wave_id.split(".")[1] in subscribed
+            }
+
+            if filtered_batch:
+                timestamp = int(time.time() * 1000)
+                filtered_packet = {
+                    "waveid": f"batch_{timestamp}",
+                    "timestamp": timestamp,
+                    "data": filtered_batch,
+                }
+                await websocket.send_json({"event": "wave_packet", "data": filtered_packet})
 
 
-@socket_manager.on("connect")
-def connect_earthworm(sid, environ):
-    socket_manager.emit("connect_init", to=sid)
+socket_manager = ConnectionManager()
 
 
-@socket_manager.on("subscribe_stations")
-def handle_subscribe_stations(sid,data):
-    """處理前端訂閱測站請求"""
-    session_id = sid
-    stations = data.get("stations", [])
-
-    if stations:
-        subscribed_stations[session_id] = set(stations)
-        logger.info(
-            f"📡 Client {session_id[:8]} subscribed to {len(stations)} stations"
-        )
-    else:
-        # 清空訂閱
-        if session_id in subscribed_stations:
-            del subscribed_stations[session_id]
-        logger.info(f"📡 Client {session_id[:8]} unsubscribed from all stations")
-
-
-@socket_manager.on("disconnect")
-def handle_disconnect(sid):
-    """客戶端斷線時清理訂閱"""
-    session_id = sid
-    if session_id in subscribed_stations:
-        del subscribed_stations[session_id]
-        logger.info(f"🔌 Client {session_id[:8]} disconnected, subscription removed")
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await socket_manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            if data.get("event") == "subscribe_stations":
+                stations = data.get("data", {}).get("stations", [])
+                socket_manager.subscribe(websocket, stations)
+    except WebSocketDisconnect:
+        socket_manager.disconnect(websocket)
 
 
 def _process_wave_data(wave, is_realtime=False):
@@ -137,6 +163,10 @@ def lowpass(data, freq=10, df=100, corners=4):
 
 def wave_emitter():
     """按需推送波形數據 - 只發送被訂閱的測站"""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     batch_interval = 0.1
     last_send_time = time.time()
 
@@ -165,28 +195,17 @@ def wave_emitter():
                 current_time = time.time()
 
             # 發送數據
-            if wave_batch and subscribed_stations:
-                all_subscribed = set()
-                for stations_set in subscribed_stations.values():
-                    all_subscribed.update(stations_set)
-
-                filtered_batch = {}
-                for wave_id, wave_data in wave_batch.items():
-                    station_code = wave_id.split(".")[1] if "." in wave_id else wave_id
-                    if station_code in all_subscribed:
-                        filtered_batch[wave_id] = wave_data
-
-                if filtered_batch:
-                    timestamp = int(time.time() * 1000)
-                    wave_packet = {
-                        "waveid": f"batch_{timestamp}",
-                        "timestamp": timestamp,
-                        "data": filtered_batch,
-                    }
-                    socket_manager.emit("wave_packet", wave_packet)
-                    logger.debug(
-                        f"📦 Batch sent: {len(filtered_batch)}/{len(wave_batch)} stations"
-                    )
+            if wave_batch and socket_manager.subscribed_stations:
+                timestamp = int(time.time() * 1000)
+                wave_packet = {
+                    "waveid": f"batch_{timestamp}",
+                    "timestamp": timestamp,
+                    "data": wave_batch,
+                }
+                loop.run_until_complete(socket_manager.send_to_subscribed(wave_packet))
+                logger.debug(
+                    f"📦 Batch sent: {len(wave_batch)} stations"
+                )
 
             last_send_time = current_time
 
@@ -197,12 +216,16 @@ def wave_emitter():
 
 
 def report_emitter():
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     while True:
         report_data = report_queue.get()
         if not report_data:
             continue
 
-        socket_manager.emit("report_data", report_data)
+        loop.run_until_complete(socket_manager.broadcast(json.dumps({"event": "report_data", "data": report_data})))
 
 
 def web_server():
@@ -830,6 +853,7 @@ if __name__ == "__main__":
 
 
     processes.append(multiprocessing.Process(target=reporter))
+    processes.append(multiprocessing.Process(target=web_server))
 
     for p in processes:
         p.start()

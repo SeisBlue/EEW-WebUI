@@ -1,7 +1,7 @@
 aiohttp
 booktype
 fastapi
-fastapi-socketio
+websockets
 loguru
 matplotlib
 numpy
