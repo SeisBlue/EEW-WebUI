@@ -10,9 +10,9 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import PyEW
-from flask import Flask, request
-from flask_cors import CORS
-from flask_socketio import SocketIO
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi_socketio import SocketManager
 from scipy.signal import detrend, iirfilter, sosfilt, zpk2sos
 from loguru import logger
 
@@ -25,12 +25,18 @@ report_queue = manager.Queue()
 wave_endt = manager.Value("d", 0)
 wave_speed_count = manager.Value("i", 0)
 
-app = Flask(__name__)
+app = FastAPI()
 # HTTP API 的 CORS
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # SocketIO 的 CORS（獨立處理 WebSocket）
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socket_manager = SocketManager(app=app, cors_allowed_origins="*")
 
 # 訂閱管理：追蹤每個客戶端訂閱的測站
 subscribed_stations = {}  # {session_id: set(station_codes)}
@@ -40,15 +46,15 @@ Web Server
 """
 
 
-@socketio.on("connect")
-def connect_earthworm():
-    socketio.emit("connect_init")
+@socket_manager.on("connect")
+def connect_earthworm(sid, environ):
+    socket_manager.emit("connect_init", to=sid)
 
 
-@socketio.on("subscribe_stations")
-def handle_subscribe_stations(data):
+@socket_manager.on("subscribe_stations")
+def handle_subscribe_stations(sid,data):
     """處理前端訂閱測站請求"""
-    session_id = request.sid
+    session_id = sid
     stations = data.get("stations", [])
 
     if stations:
@@ -63,10 +69,10 @@ def handle_subscribe_stations(data):
         logger.info(f"📡 Client {session_id[:8]} unsubscribed from all stations")
 
 
-@socketio.on("disconnect")
-def handle_disconnect():
+@socket_manager.on("disconnect")
+def handle_disconnect(sid):
     """客戶端斷線時清理訂閱"""
-    session_id = request.sid
+    session_id = sid
     if session_id in subscribed_stations:
         del subscribed_stations[session_id]
         logger.info(f"🔌 Client {session_id[:8]} disconnected, subscription removed")
@@ -177,7 +183,7 @@ def wave_emitter():
                         "timestamp": timestamp,
                         "data": filtered_batch,
                     }
-                    socketio.emit("wave_packet", wave_packet)
+                    socket_manager.emit("wave_packet", wave_packet)
                     logger.debug(
                         f"📦 Batch sent: {len(filtered_batch)}/{len(wave_batch)} stations"
                     )
@@ -196,19 +202,19 @@ def report_emitter():
         if not report_data:
             continue
 
-        socketio.emit("report_data", report_data)
+        socket_manager.emit("report_data", report_data)
 
 
 def web_server():
-    """啟動 Web Server 與 SocketIO"""
+    """啟動 Web Server 與 socket_manager"""
     logger.info("Starting web server...")
 
     # 啟動背景資料發送執行緒
     threading.Thread(target=wave_emitter, daemon=True).start()
     threading.Thread(target=report_emitter, daemon=True).start()
 
-    app.run(host=args.host, port=args.port, use_reloader=False)
-    socketio.run(app, host=args.host, port=args.port, debug=True)
+    import uvicorn
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 """
@@ -808,17 +814,17 @@ if __name__ == "__main__":
         )
         logger.info(f"Added ring{len(ring_order) - 1}: {ring_name} with ID {ring_id}")
 
-    # # 添加 eew rings（根據 env 動態添加）
-    # for ring_name, ring_id in earthworm_param[args.env]["eew"].items():
-    #     earthworm.add_ring(ring_id)
-    #     ring_order.append(ring_name)
-    #     buf_ring = len(ring_order) - 1
-    #     processes.append(
-    #         multiprocessing.Process(target=earthworm_eew_listener,
-    #                                 kwargs={"buf_ring": buf_ring})
-    #     )
-    #     logger.info(
-    #         f"Added ring{len(ring_order) - 1}: {ring_name} with ID {ring_id}")
+    # 添加 eew rings（根據 env 動態添加）
+    for ring_name, ring_id in earthworm_param[args.env]["eew"].items():
+        earthworm.add_ring(ring_id)
+        ring_order.append(ring_name)
+        buf_ring = len(ring_order) - 1
+        processes.append(
+            multiprocessing.Process(target=earthworm_eew_listener,
+                                    kwargs={"buf_ring": buf_ring})
+        )
+        logger.info(
+            f"Added ring{len(ring_order) - 1}: {ring_name} with ID {ring_id}")
 
     logger.info(f"{args.env} env, inst_id = {earthworm_param[args.env]['inst_id']}")
 

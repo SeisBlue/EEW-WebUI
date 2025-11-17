@@ -1,28 +1,33 @@
 version: '3.8'
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    ports:
-      - "6379:6379"
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
-  reader:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
+  earthworm:
+    image: cwadayi/earthworm_ubuntu22.04_eew:v1
+    container_name: earthworm
+    volumes:
+      - ./:/workspace
+    ipc: host
+    network_mode: host
+    command: bash -c "source /opt/earthworm/ew_linux.bash && startstop"
+    stdin_open: true
+    tty: true
+  backend:
     image: seisblue/eew
-    container_name: reader
-    command: ["python", "reader_pyew.py"]
-    depends_on:
-      - redis
-  dispatcher:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    image: seisblue/eew
-    container_name: dispatcher
-    command: ["uvicorn", "dispatcher:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    container_name: backend
+    volumes:
+      - ./:/workspace
+    ipc: host
+    network_mode: host
+    command: ["uvicorn", "eew_backend:app", "--host", "0.0.0.0", "--port", "5001"]
     ports:
-      - "8000:8000"
+      - "5001:5001"
     depends_on:
-      - redis
+      - earthworm
+  frontend:
+    image: seisblue/eew
+    container_name: frontend
+    volumes:
+      - ./:/workspace
+    ipc: host
+    network_mode: host
+    working_dir: /workspace/frontend
+    command: ["/usr/bin/pnpm", "run", "dev", "--host"]
