@@ -22,16 +22,19 @@ from typing import Tuple
 
 import numpy as np
 import redis.asyncio as aioredis
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 try:
     import PyEW
 except Exception as e:
     raise RuntimeError("PyEW import failed; ensure PyEW is installed and Earthworm headers available") from e
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379")
 STREAM_KEY = os.getenv("STREAM_KEY", "waves")
-QUEUE_MAXSIZE = int(os.getenv("QUEUE_MAXSIZE", "5000"))
-BATCH_MAX = int(os.getenv("BATCH_MAX", "50"))
+QUEUE_MAXSIZE = int(os.getenv("QUEUE_MAXSIZE", "100000"))
+BATCH_MAX = int(os.getenv("BATCH_MAX", "1000"))
 BATCH_TIMEOUT = float(os.getenv("BATCH_TIMEOUT", "0.05"))
 EW_DEF_RING = int(os.getenv("EW_DEF_RING", "1000"))
 EW_MOD = int(os.getenv("EW_MOD", "2"))
@@ -53,7 +56,13 @@ DTYPE_MAP = {"i2": np.int16, "s2": np.int16, "i4": np.int32, "s4": np.int32,
              "f4": np.float32, "f8": np.float64, "t4": np.float32, "t8": np.float64}
 
 async def redis_writer(queue: asyncio.Queue):
-    r = aioredis.from_url(REDIS_URL)
+    # Configure Redis client with connection retries using exponential backoff
+    retry = Retry(ExponentialBackoff(cap=5, full_jitter=True), 5)
+    r = aioredis.from_url(
+        REDIS_URL,
+        retry_on_error=[RedisConnectionError, asyncio.TimeoutError],
+        retry=retry,
+    )
     batch = []
     last_flush = time.time()
     while True:
@@ -78,9 +87,12 @@ async def redis_writer(queue: asyncio.Queue):
                 logger.debug("Flushed %d messages to Redis", len(batch))
                 batch.clear()
                 last_flush = time.time()
+        except RedisConnectionError as e:
+            logger.error("Redis connection failed after retries: %s. Waiting before next attempt.", e)
+            await asyncio.sleep(5)
         except Exception as e:
             logger.exception("redis_writer error: %s", e)
-            # backoff on redis errors
+            # backoff on other errors
             await asyncio.sleep(0.5)
 
 async def main():
@@ -170,7 +182,7 @@ async def main():
                     queue.put_nowait((meta, payload_bytes))
                 except asyncio.QueueFull:
                     # drop policy: drop this message (or you could pop oldest and push)
-                    logger.warning("Queue full, dropping message for station %s", meta.get("station"))
+                    logger.warning("Queue full, dropping message for station %s", meta.get("station", "N/A"))
                     # increment a metric or alert as needed
 
             except KeyboardInterrupt:
