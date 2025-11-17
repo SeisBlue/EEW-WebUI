@@ -765,26 +765,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     processes = []
 
-    # get config
-    config_file = "ttsam_config.json"
-    try:
-        config = json.load(open(config_file, "r"))
-        logger.info(f"{config_file} loaded")
-    except FileNotFoundError:
-        config = {
-            "mqtt": {
-                "username": "ttsam",
-                "password": "ttsam",
-                "host": "0.0.0.0",
-                "port": 1883,
-                "topic": "ttsam",
-            },
-            "discord": {
-                "webhook_url": "webhook",
-                "proxies": {"http": "proxy", "https": "proxy"},
-            },
-        }
-        logger.warning(f"{config_file} not found, using default config")
 
     # 配置日誌設置
     logger.remove()
