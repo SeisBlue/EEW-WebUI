@@ -1,7 +1,7 @@
 import argparse
 import bisect
 import json
-import os
+import multiprocessing
 import sys
 import threading
 import time
@@ -10,20 +10,14 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import PyEW
-import torch
-import torch.multiprocessing as mp
-import xarray as xr
-from discord_webhook import DiscordEmbed, DiscordWebhook
 from flask import Flask, request
 from flask_cors import CORS
 from flask_socketio import SocketIO
-from huggingface_hub import hf_hub_download
-from loguru import logger
 from scipy.signal import detrend, iirfilter, sosfilt, zpk2sos
-from scipy.spatial import cKDTree
+from loguru import logger
 
 # 初始化 multiprocessing 共享物件
-manager = mp.Manager()
+manager = multiprocessing.Manager()
 wave_buffer = manager.dict()
 wave_queue = manager.Queue()
 pick_buffer = manager.dict()
@@ -106,6 +100,34 @@ def _process_wave_data(wave, is_realtime=False):
         "is_realtime": is_realtime,
     }
 
+
+
+def signal_processing(waveform):
+    try:
+        # demean and lowpass filter
+        data = detrend(waveform, type="constant")
+        data = lowpass(data, freq=10)
+
+        return data
+
+    except Exception as e:
+        logger.error(f"signal_processing error: {e}")
+
+
+def lowpass(data, freq=10, df=100, corners=4):
+    """
+    Modified form ObsPy Signal Processing
+    https://docs.obspy.org/_modules/obspy/signal/filter.html#lowpass
+    """
+    fe = 0.5 * df
+    f = freq / fe
+
+    if f > 1:
+        f = 1.0
+    z, p, k = iirfilter(corners, f, btype="lowpass", ftype="butter", output="zpk")
+    sos = zpk2sos(z, p, k)
+
+    return sosfilt(sos, data)
 
 def wave_emitter():
     """按需推送波形數據 - 只發送被訂閱的測站"""
@@ -455,44 +477,6 @@ def earthworm_eew_listener(buf_ring):
         time.sleep(0.00001)
 
 
-"""
-Model Inference
-"""
-# Load Vs30 grid
-try:
-    vs30_file = "/workspace/station/Vs30ofTaiwan.nc"
-    ds = xr.open_dataset(vs30_file)
-    logger.info("Using local Vs30 file path")
-except FileNotFoundError:
-    vs30_file = hf_hub_download(
-        repo_id="SeisBlue/TaiwanVs30",
-        filename="Vs30ofTaiwan.nc",
-        local_dir="/workspace/station",
-        repo_type="dataset",
-    )
-    ds = xr.open_dataset(vs30_file)
-    logger.info("Using huggingface Vs30 file path")
-
-try:
-    # 將 2D 座標展平成 1D 陣列供 KDTree 使用
-    lat_flat = ds["lat"].values.flatten()
-    lon_flat = ds["lon"].values.flatten()
-    vs30_flat = ds["vs30"].values.flatten()
-
-    # 建立查詢表格
-    vs30_table = pd.DataFrame({"lat": lat_flat, "lon": lon_flat, "Vs30": vs30_flat})
-
-    # 移除包含 NaN 或 Inf 的資料
-    vs30_table = vs30_table.replace([np.inf, -np.inf], np.nan)
-    vs30_table = vs30_table.dropna()
-
-    logger.info(f"Valid data points: {len(vs30_table)}")
-
-    tree = cKDTree(vs30_table[["lat", "lon"]])
-    logger.info(f"{vs30_file} loaded")
-except FileNotFoundError:
-    logger.error(f"{vs30_file} not found")
-
 # Load target station
 target_file = "/workspace/station/eew_target.csv"
 try:
@@ -544,181 +528,6 @@ except Exception as e:
     logger.error(f"Error loading {site_info_file}: {e}")
 
 
-model_path = "/workspace/ttsam_trained_model_11.pt"
-try:
-    os.path.exists(f"{model_path}")
-except FileNotFoundError:
-    logger.info(f"Check model weight...")
-    model_path = hf_hub_download(
-        repo_id="SeisBlue/TTSAM",
-        filename="ttsam_trained_model_11.pt",
-        local_dir="/workspace",
-        repo_type="model",
-    )
-    logger.info(f"found {model_path} model weight")
-    logger.error(f"Error loading {model_path}: {e}")
-
-
-def event_cutter(pick_buffer):
-    event_data = {}
-    # pick 只有 Z 軸
-    for pick_id, pick in pick_buffer.items():
-        network = pick["network"]
-        station = pick["station"]
-        location = pick["location"]
-        channel = pick["channel"]
-
-        data = {}
-        # 找到 wave_buffer 內的三軸資料
-        for i, component in enumerate(["Z", "N", "E"]):
-            try:
-                wave_id = f"{network}.{station}.{location}.{channel[0:2]}{component}"
-                data[component.lower()] = wave_buffer[wave_id].tolist()
-
-            except KeyError:
-                logger.debug(f"{wave_id} {component} not found, add zero array")
-                wave_id = f"{network}.{station}.{location}.{channel[0:2]}Z"
-                data[component.lower()] = np.zeros(3000).tolist()
-                continue
-
-        trace_dict = {
-            "traceid": pick_id,
-            "data": data,
-        }
-
-        event_data[pick_id] = {"pick": pick, "trace": trace_dict}
-
-    event_queue.put(event_data)
-
-    return event_data
-
-
-def signal_processing(waveform):
-    try:
-        # demean and lowpass filter
-        data = detrend(waveform, type="constant")
-        data = lowpass(data, freq=10)
-
-        return data
-
-    except Exception as e:
-        logger.error(f"signal_processing error: {e}")
-
-
-def lowpass(data, freq=10, df=100, corners=4):
-    """
-    Modified form ObsPy Signal Processing
-    https://docs.obspy.org/_modules/obspy/signal/filter.html#lowpass
-    """
-    fe = 0.5 * df
-    f = freq / fe
-
-    if f > 1:
-        f = 1.0
-    z, p, k = iirfilter(corners, f, btype="lowpass", ftype="butter", output="zpk")
-    sos = zpk2sos(z, p, k)
-
-    return sosfilt(sos, data)
-
-
-
-def get_station_position(station):
-    try:
-        latitude, longitude, elevation = site_info.loc[
-            (site_info["Station"] == station), ["Latitude", "Longitude", "Elevation"]
-        ].values[0]
-        return latitude, longitude, elevation
-    except Exception as e:
-        logger.error(f"get_station_position error: {station}, {e}")
-        return
-
-
-def get_site_info(pick):
-    try:
-        latitude, longitude, elevation = get_station_position(pick["station"])
-        vs30 = get_vs30(latitude, longitude)
-        return [latitude, longitude, elevation, vs30]
-
-    except Exception as e:
-        logger.debug(f"{pick['station']} not found in site_info, use pick info")
-        latitude, longitude, elevation = pick["lat"], pick["lon"], 100
-        vs30 = get_vs30(latitude, longitude)
-        return [latitude, longitude, elevation, vs30]
-
-
-def convert_dataset(event_msg):
-    try:
-        waveform_list = []
-        station_list = []
-        station_name_list = []
-
-        for i, (pick_id, data) in enumerate(event_msg.items()):
-            trace = []
-            for j, component in enumerate(["Z", "N", "E"]):
-                waveform = data["trace"]["data"][component.lower()]
-                waveform = signal_processing(waveform)
-                trace.append(waveform.tolist())
-
-            waveform_list.append(trace)
-            station_list.append(get_site_info(data["pick"]))
-            station_name_list.append(data["pick"]["station"])
-
-        dataset = {
-            "waveform": waveform_list,
-            "station": station_list,
-            "station_name": station_name_list,
-            "target": [],
-            "target_name": [],
-            "pga": [],
-        }
-
-        return dataset
-
-    except Exception as e:
-        logger.error(f"converter error: {e}")
-
-
-def dataset_batch(dataset, batch_size=25):
-    batch = {}
-    try:
-        # 固定前 25 站的 waveform
-        batch["waveform"] = dataset["waveform"][:batch_size]
-        batch["station"] = dataset["station"][:batch_size]
-        batch["station_name"] = dataset["station_name"][:batch_size]
-
-        for i in range(0, len(dataset["target"]), batch_size):
-            # 迭代 25 站的 target
-            batch["target"] = dataset["target"][i : i + batch_size]
-            batch["target_name"] = dataset["target_name"][i : i + batch_size]
-
-            yield batch
-
-    except Exception as e:
-        logger.error(f"dataset_batch error: {e}")
-
-
-def get_target_dataset(dataset):
-    target_list = []
-    target_name_list = []
-
-    for target in target_dict:
-        latitude = target["latitude"]
-        longitude = target["longitude"]
-        elevation = target["elevation"]
-        target_list.append(
-            [latitude, longitude, elevation, get_vs30(latitude, longitude)]
-        )
-        target_name_list.append(target["station"])
-    dataset["target"] = target_list
-    dataset["target_name"] = target_name_list
-
-    return dataset
-
-
-def get_average_pga(weight, sigma, mu):
-    pga_list = torch.sum(weight * mu, dim=2).cpu().detach().numpy().flatten()
-    return pga_list.tolist()
-
 
 def calculate_intensity(pga, pgv=None, label=False):
     try:
@@ -748,13 +557,6 @@ def calculate_intensity(pga, pgv=None, label=False):
     except Exception as e:
         logger.error(f"calculate_intensity error: {e}")
 
-
-def prepare_tensor(data, shape, limit):
-    # 輸出固定的 tensor shape, 並將資料填入
-    tensor_data = np.zeros(shape)
-    tensor_limit = min(len(data), limit)
-    tensor_data[:tensor_limit] = data[:tensor_limit]
-    return torch.tensor(tensor_data).to(torch.double).unsqueeze(0)
 
 
 def loading_animation(pick_threshold):
@@ -853,11 +655,6 @@ def reporter():
             ) as f:
                 f.write(format_report + "\n")
 
-            # 報告傳至 Discord
-            discord_queue.put(format_report)
-            if args.mqtt:
-                # 報告傳至 MQTT
-                mqtt_client.publish(topic, json.dumps(report))
 
             past_alarm_county.update(new_alarm_county)
             new_alarm_county = {}
@@ -911,7 +708,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--env",
         type=str,
-        default="cwa",
+        default="test",
         choices=["cwa", "test", "jimmy"],
         help="set environment",
     )
@@ -997,7 +794,7 @@ if __name__ == "__main__":
         ring_order.append(ring_name)
         buf_ring = len(ring_order) - 1
         processes.append(
-            mp.Process(target=earthworm_wave_listener, kwargs={"buf_ring": buf_ring})
+            multiprocessing.Process(target=earthworm_wave_listener, kwargs={"buf_ring": buf_ring})
         )
         logger.info(f"Added ring{len(ring_order) - 1}: {ring_name} with ID {ring_id}")
 
@@ -1007,7 +804,7 @@ if __name__ == "__main__":
         ring_order.append(ring_name)
         buf_ring = len(ring_order) - 1
         processes.append(
-            mp.Process(target=earthworm_pick_listener, kwargs={"buf_ring": buf_ring})
+            multiprocessing.Process(target=earthworm_pick_listener, kwargs={"buf_ring": buf_ring})
         )
         logger.info(f"Added ring{len(ring_order) - 1}: {ring_name} with ID {ring_id}")
 
@@ -1017,7 +814,7 @@ if __name__ == "__main__":
     #     ring_order.append(ring_name)
     #     buf_ring = len(ring_order) - 1
     #     processes.append(
-    #         mp.Process(target=earthworm_eew_listener,
+    #         multiprocessing.Process(target=earthworm_eew_listener,
     #                                 kwargs={"buf_ring": buf_ring})
     #     )
     #     logger.info(
@@ -1026,7 +823,7 @@ if __name__ == "__main__":
     logger.info(f"{args.env} env, inst_id = {earthworm_param[args.env]['inst_id']}")
 
 
-    processes.append(mp.Process(target=reporter))
+    processes.append(multiprocessing.Process(target=reporter))
 
     for p in processes:
         p.start()

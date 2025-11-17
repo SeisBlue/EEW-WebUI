@@ -1,3 +1,5 @@
+aiohttp
+booktype
 fastapi
 flask-cors
 flask-socketio
@@ -7,8 +9,11 @@ netCDF4
 numpy
 pandas
 plotly
+python-dotenv
 redis
+redis>=4.5.0
 scipy
+starlette
 tqdm
 uvicorn
 xarray
