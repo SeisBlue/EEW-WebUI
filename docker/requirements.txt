@@ -8,7 +8,7 @@ numpy
 pandas
 plotly
 python-dotenv
-redis[hiredis]
+redis[hiredis]>7.0.0
 scipy
 starlette
 tqdm
