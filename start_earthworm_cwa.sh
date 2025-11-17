@@ -6,4 +6,4 @@ docker run \
 --ipc host \
 --net host \
 --name earthworm \
-cwadayi/earthworm_ubuntu22.04_eew:v1 bash -c "source /opt/earthworm/ew_linux.bash && exec bash"
+cwadayi/earthworm_ubuntu22.04_eew:v1 bash -c "source /opt/earthworm/ew_linux.bash && startstop"
