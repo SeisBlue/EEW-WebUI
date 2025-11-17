@@ -7,13 +7,19 @@ services:
       - "6379:6379"
     command: ["redis-server", "--save", "", "--appendonly", "no"]
   reader:
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: seisblue/eew
     container_name: reader
-    command: ["python", "reader_stub.py"]
+    command: ["python", "reader_pyew.py"]
     depends_on:
       - redis
   dispatcher:
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: seisblue/eew
     container_name: dispatcher
     command: ["uvicorn", "dispatcher:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
     ports:
