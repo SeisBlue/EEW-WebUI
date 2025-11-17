@@ -1,6 +1,7 @@
 aiohttp
 booktype
 fastapi
+fastapi-socketio
 flask-cors
 flask-socketio
 loguru
