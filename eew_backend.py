@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import datetime
 from typing import List, Set
+import asyncio
 
 import numpy as np
 import pandas as pd
@@ -45,6 +46,7 @@ class ConnectionManager:
         self.active_connections.append(websocket)
         self.subscribed_stations[websocket] = set()
         logger.info(f"📡 Client {websocket.client.host} connected")
+        await websocket.send_json({"event": "connect_init"})
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.remove(websocket)
@@ -62,34 +64,31 @@ class ConnectionManager:
             self.subscribed_stations[websocket] = set()
             logger.info(f"📡 Client {websocket.client.host} unsubscribed from all stations")
 
-    async def broadcast(self, message: str):
+    async def broadcast(self, payload: dict):
         for connection in self.active_connections:
-            await connection.send_text(message)
+            await connection.send_json(payload)
 
-    async def send_to_subscribed(self, message: dict):
-        wave_packet = message.get("data", {})
+    async def send_wave_packet(self, wave_packet: dict):
+        wave_batch = wave_packet.get("data", {})
         for websocket, subscribed in self.subscribed_stations.items():
             if not subscribed:
                 continue
 
             filtered_batch = {
                 wave_id: wave_data
-                for wave_id, wave_data in wave_packet.items()
+                for wave_id, wave_data in wave_batch.items()
                 if wave_id.split(".")[1] in subscribed
             }
 
             if filtered_batch:
-                timestamp = int(time.time() * 1000)
                 filtered_packet = {
-                    "waveid": f"batch_{timestamp}",
-                    "timestamp": timestamp,
+                    "waveid": wave_packet["waveid"],
+                    "timestamp": wave_packet["timestamp"],
                     "data": filtered_batch,
                 }
                 await websocket.send_json({"event": "wave_packet", "data": filtered_packet})
 
-
 socket_manager = ConnectionManager()
-
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -97,8 +96,10 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_json()
-            if data.get("event") == "subscribe_stations":
-                stations = data.get("data", {}).get("stations", [])
+            event = data.get("event")
+            payload = data.get("data")
+            if event == "subscribe_stations":
+                stations = payload.get("stations", [])
                 socket_manager.subscribe(websocket, stations)
     except WebSocketDisconnect:
         socket_manager.disconnect(websocket)
@@ -163,7 +164,6 @@ def lowpass(data, freq=10, df=100, corners=4):
 
 def wave_emitter():
     """按需推送波形數據 - 只發送被訂閱的測站"""
-    import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -176,7 +176,7 @@ def wave_emitter():
             current_time = time.time()
 
             # 收集一定時間內的所有波形數據
-            while current_time - last_send_time < batch_interval:
+            while time.time() - last_send_time < batch_interval:
                 try:
                     wave = wave_queue.get(timeout=0.05)
                     wave_id = join_id_from_dict(wave, order="NSLC")
@@ -202,9 +202,9 @@ def wave_emitter():
                     "timestamp": timestamp,
                     "data": wave_batch,
                 }
-                loop.run_until_complete(socket_manager.send_to_subscribed(wave_packet))
+                loop.run_until_complete(socket_manager.send_wave_packet(wave_packet))
                 logger.debug(
-                    f"📦 Batch sent: {len(wave_batch)} stations"
+                    f"📦 Batch processed for sending: {len(wave_batch)} stations"
                 )
 
             last_send_time = current_time
@@ -216,20 +216,18 @@ def wave_emitter():
 
 
 def report_emitter():
-    import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
     while True:
         report_data = report_queue.get()
         if not report_data:
             continue
 
-        loop.run_until_complete(socket_manager.broadcast(json.dumps({"event": "report_data", "data": report_data})))
+        loop.run_until_complete(socket_manager.broadcast({"event": "report_data", "data": report_data}))
 
 
 def web_server():
-    """啟動 Web Server 與 socket_manager"""
+    """啟動 Web Server 與 WebSocket 管理器"""
     logger.info("Starting web server...")
 
     # 啟動背景資料發送執行緒
@@ -853,7 +851,8 @@ if __name__ == "__main__":
 
 
     processes.append(multiprocessing.Process(target=reporter))
-    processes.append(multiprocessing.Process(target=web_server))
 
     for p in processes:
         p.start()
+
+    web_server()

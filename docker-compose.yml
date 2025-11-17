@@ -18,8 +18,6 @@ services:
     ipc: host
     network_mode: host
     command: ["/usr/local/bin/python", "/workspace/eew_backend.py"]
-    ports:
-      - "5001:5001"
     depends_on:
       - earthworm
   frontend:
