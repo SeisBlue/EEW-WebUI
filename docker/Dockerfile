@@ -29,6 +29,6 @@ COPY pick_eew /opt/earthworm/earthworm_8.0/bin/
 # Install PyEarthworm
 ENV EW_VERSION="8.0"
 ENV EW_HOME=/opt/earthworm/earthworm_8.0
-ENV EW_PARAMS=/opt/earthworm/run/params
+ENV EW_PARAMS=${EW_HOME}/environment
 ENV CFLAGS="-fno-stack-protector -fPIC -Dlinux -D_LINUX -D_USE_SCHED -D_USE_PTHREADS -D_USE_TERMIOS -I${EW_HOME}/include"
 RUN python -m pip install git+https://github.com/Boritech-Solutions/PyEarthworm
