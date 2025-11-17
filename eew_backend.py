@@ -624,6 +624,17 @@ def convert_intensity(value):
     else:
         return float(value)
 
+# Load target station
+target_file = "/workspace/station/eew_target.csv"
+try:
+    logger.info(f"Loading {target_file}...")
+    target_df = pd.read_csv(target_file)
+    target_dict = target_df.to_dict(orient="records")
+    logger.info(f"{target_file} loaded")
+
+except FileNotFoundError:
+    logger.error(f"{target_file} not found")
+
 
 def reporter():
     """
