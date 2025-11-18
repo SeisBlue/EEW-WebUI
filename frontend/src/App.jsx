@@ -237,7 +237,7 @@ function App() {
   const displayStations = useMemo(() => {
     switch (selectionMode) {
       case 'all':
-        const received = Object.keys(waveDataMap).map(s => s.split('.')[1]).filter(Boolean);
+        const received = Object.keys(waveDataMap);
         return [...new Set(received)].sort((a, b) => (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0));
       case 'custom':
         return customStations;
