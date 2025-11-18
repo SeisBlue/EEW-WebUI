@@ -1,113 +1,208 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import './App.css';
 import Papa from 'papaparse';
 import TaiwanMap from './components/TaiwanMapDeck';
-import RealtimeWaveform from './components/RealtimeWaveformDeck';
+import RealtimeWaveformDeck from './components/RealtimeWaveformDeck';
+import StationSelection from './components/StationSelection';
+import { isTSMIPStation } from './utils';
+
+// 所有測站列表 - 按緯度排列顯示
+const EEW_TARGETS = [
+  'NOU', 'TIPB', 'ILA', 'TWC', 'ENT',
+  'HWA', 'EGFH', 'EYUL', 'TTN', 'ECS', 'TAWH', 'HEN',
+  'TAP', 'A024', 'NTS', 'NTY', 'NCU', 'B011',
+  'HSN1', 'HSN', 'NJD', 'B131', 'TWQ1', 'B045',
+  'TCU', 'WDJ', 'WHP', 'WNT1', 'WPL', 'WHY',
+  'WCHH', 'WYL', 'WDL', 'WSL', 'CHY1', 'C095', 'WCKO',
+  'TAI', 'C015', 'CHN1', 'KAU', 'SCS', 'SPT', 'SSD',
+  'PNG', 'KNM', 'MSU'
+];
 
 function App() {
+  // View and selection state
+  const [view, setView] = useState('waveform'); // 'waveform' or 'stationSelection'
+  const [selectionMode, setSelectionMode] = useState('default'); // 'default', 'tsmip', 'all', 'custom'
+  const [customStations, setCustomStations] = useState([]);
+
+  // WebSocket and data state
   const [isConnected, setIsConnected] = useState(false);
+  const [socket, setSocket] = useState(null);
   const [wavePackets, setWavePackets] = useState([]);
   const [latestWaveTime, setLatestWaveTime] = useState(null);
+
+  // Station and map state
   const [targetStations, setTargetStations] = useState([]);
-  const [socket, setSocket] = useState(null);
   const [stationReplacements, setStationReplacements] = useState({});
   const [stationIntensities, setStationIntensities] = useState({});
+  const [stationMap, setStationMap] = useState({});
+  const [nearestStationCache, setNearestStationCache] = useState({});
+  const [waveDataMapForStressTest, setWaveDataMapForStressTest] = useState({});
 
+  // Load initial station metadata
   useEffect(() => {
     Papa.parse('/eew_target.csv', {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
+      download: true, header: true, skipEmptyLines: true,
       complete: (results) => {
         const stations = results.data.map(s => ({
-          network: s.network,
-          county: s.county,
-          station: s.station,
-          station_zh: s.station_zh,
-          longitude: parseFloat(s.longitude),
-          latitude: parseFloat(s.latitude),
-          elevation: parseFloat(s.elevation),
-          status: 'unknown',
-          lastSeen: null,
-          pga: null,
+          network: s.network, county: s.county, station: s.station, station_zh: s.station_zh,
+          longitude: parseFloat(s.longitude), latitude: parseFloat(s.latitude), elevation: parseFloat(s.elevation),
+          status: 'unknown', lastSeen: null, pga: null,
         }));
         setTargetStations(stations);
-        console.log('📍 Loaded', stations.length, 'target stations from eew_target.csv');
+        console.log('📍 [App] Loaded', stations.length, 'target stations from eew_target.csv');
       },
-      error: (err) => {
-        console.error('載入 eew_target.csv 失敗:', err);
-      }
+      error: (err) => console.error('❌ [App] Failed to load eew_target.csv:', err)
     });
 
+    Papa.parse('/site_info.csv', {
+      download: true, header: true, skipEmptyLines: true,
+      complete: (results) => {
+        const newStationMap = {};
+        results.data.forEach(s => {
+          if (s.Station) {
+            newStationMap[s.Station] = {
+              station: s.Station,
+              latitude: parseFloat(s.Latitude),
+              longitude: parseFloat(s.Longitude),
+            };
+          }
+        });
+        setStationMap(newStationMap);
+        console.log('📍 [App] stationMap updated:', Object.keys(newStationMap).length, 'stations from site_info.csv');
+      },
+      error: (err) => console.error('❌ [App] Failed to load site_info.csv:', err)
+    });
+  }, []);
+
+  // WebSocket connection management
+  useEffect(() => {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
-    console.log(`🔌 Attempting to connect to WebSocket at ${wsUrl}`);
-
     const ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-      console.log('✅ Connected to Server');
-      setIsConnected(true);
-      setSocket(ws);
-    };
-
-    ws.onclose = () => {
-      console.log('❌ Disconnected from Server');
-      setIsConnected(false);
-      setSocket(null);
-    };
-
-    ws.onerror = (error) => {
-      console.error('❌ WebSocket Error:', error);
-    };
+    ws.onopen = () => { console.log('✅ [App] Connected'); setIsConnected(true); setSocket(ws); };
+    ws.onclose = () => { console.log('❌ [App] Disconnected'); setIsConnected(false); setSocket(null); };
+    ws.onerror = (error) => console.error('❌ [App] WebSocket Error:', error);
 
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
-      const { event: eventType, data } = message;
-
-      switch (eventType) {
-        case 'connect_init':
-          console.log('🔌 Connection initialized by server');
-          break;
-        case 'wave_packet':
-          console.log('🌊 Wave packet received:', data.waveid);
-          setLatestWaveTime(new Date().toLocaleString('zh-TW'));
-          setWavePackets(prev => [data, ...prev].slice(0, 10));
-          break;
-        default:
-          console.warn('Unknown event type received:', eventType);
+      if (message.event === 'wave_packet') {
+        setLatestWaveTime(new Date().toLocaleString('zh-TW'));
+        setWavePackets(prev => [message.data, ...prev].slice(0, 10));
+        if (selectionMode === 'all') {
+          setWaveDataMapForStressTest(prev => ({ ...prev, ...message.data.data }));
+        }
       }
     };
 
+    return () => { if (ws.readyState === WebSocket.OPEN) ws.close(); };
+  }, [selectionMode]);
+
+  // Find nearest TSMIP stations
+  useEffect(() => {
+    if (Object.keys(stationMap).length === 0) return;
+
+    const fetchNearestStations = async () => {
+      const cache = {};
+      for (const stationCode of EEW_TARGETS) {
+        const station = stationMap[stationCode];
+        if (!station || isTSMIPStation(stationCode) || !station.latitude || !station.longitude) continue;
+        try {
+          const response = await fetch(`/api/find-nearest-station?lat=${station.latitude}&lon=${station.longitude}&exclude_pattern=CWASN&max_count=1`);
+          if (response.ok) {
+            const nearest = await response.json();
+            if (nearest?.[0] && nearest[0].distance_km <= 5) {
+              cache[stationCode] = {
+                originalStation: stationCode,
+                replacementStation: nearest[0].station,
+                distance: nearest[0].distance_km,
+                coordinates: { lat: nearest[0].latitude, lon: nearest[0].longitude }
+              };
+            }
+          }
+        } catch (error) { console.error(`❌ [App] Failed to find nearest station for ${stationCode}:`, error); }
+      }
+      setNearestStationCache(cache);
+      console.log('✅ [App] Nearest TSMIP station cache created:', Object.keys(cache).length, 'replacements found.');
+    };
+    fetchNearestStations();
+  }, [stationMap]);
+
+  // Update station replacements for the map based on selection mode
+  useEffect(() => {
+    if (selectionMode === 'tsmip') {
+      setStationReplacements(nearestStationCache);
+    } else {
+      setStationReplacements({});
+    }
+  }, [selectionMode, nearestStationCache]);
+
+  // Calculate the list of stations to display
+  const displayStations = useMemo(() => {
+    switch (selectionMode) {
+      case 'tsmip':
+        return EEW_TARGETS.map(code => nearestStationCache[code]?.replacementStation || code);
+      case 'all':
+        const received = Object.keys(waveDataMapForStressTest).map(s => s.split('.')[1]).filter(Boolean);
+        return [...new Set(received)].sort((a, b) => (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0));
+      case 'custom':
+        return customStations;
+      case 'default':
+      default:
+        return EEW_TARGETS;
+    }
+  }, [selectionMode, nearestStationCache, waveDataMapForStressTest, customStations, stationMap]);
+
+  // Subscribe to WebSocket station data
+  useEffect(() => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const stationsToSubscribe = selectionMode === 'all' ? ['__ALL_Z__'] : displayStations;
+    if (stationsToSubscribe.length > 0) {
+      socket.send(JSON.stringify({ event: 'subscribe_stations', data: { stations: stationsToSubscribe } }));
+    }
     return () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ event: 'subscribe_stations', data: { stations: [] } }));
       }
     };
-  }, []);
+  }, [socket, displayStations, selectionMode]);
+
+  const handleSelectionChange = (mode, selectedStations) => {
+    setSelectionMode(mode);
+    if (mode === 'custom') {
+      setCustomStations(selectedStations);
+    }
+    // Reset data when selection changes to avoid showing stale waveforms
+    setWavePackets([]);
+    setStationIntensities({});
+    if (mode !== 'all') {
+      setWaveDataMapForStressTest({});
+    }
+  };
+
+  const waveformTitle = useMemo(() => {
+    const count = displayStations.length;
+    switch (selectionMode) {
+      case 'tsmip': return `全台 PWS 參考點 (TSMIP 替換) - ${count} 站`;
+      case 'all': return `壓力測試：所有 Z 軸波形 (${count} 站)`;
+      case 'custom': return `自訂測站列表 (${count} 站)`;
+      default: return `全台 PWS 參考點 - ${count} 站`;
+    }
+  }, [selectionMode, displayStations.length]);
 
   return (
     <div className="app">
       <header className="app-header">
         <div className="header-left">
-          <h1 className="app-title">
-            AI 地震預警即時監控面板
-          </h1>
+          <h1 className="app-title">AI 地震預警即時監控面板</h1>
           <div className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
             {isConnected ? '🟢 已連接' : '🔴 未連接'}
           </div>
         </div>
         <div className="header-right">
-          {!latestWaveTime ? (
-            <div className="wave-status-compact waiting">
-              <span className="wave-icon">⏳</span>
-              <span className="wave-text">等待波形</span>
-            </div>
+          {latestWaveTime ? (
+            <div className="wave-status-compact active"><span className="wave-icon">🌊</span><span className="wave-text">{latestWaveTime}</span></div>
           ) : (
-            <div className="wave-status-compact active">
-              <span className="wave-icon">🌊</span>
-              <span className="wave-text">{latestWaveTime}</span>
-            </div>
+            <div className="wave-status-compact waiting"><span className="wave-icon">⏳</span><span className="wave-text">等待波形</span></div>
           )}
         </div>
       </header>
@@ -115,7 +210,12 @@ function App() {
       <div className="dashboard">
         <div className="left-panel">
           <section className="section map-section">
-            <h2>測站分布</h2>
+            <div className="section-header">
+              <h2>測站分布</h2>
+              <button className="select-station-button" onClick={() => setView('stationSelection')}>
+                選擇顯示測站
+              </button>
+            </div>
             <TaiwanMap
               stations={targetStations}
               stationReplacements={stationReplacements}
@@ -125,12 +225,23 @@ function App() {
         </div>
 
         <div className="right-panel">
-          <RealtimeWaveform
-            wavePackets={wavePackets}
-            socket={socket}
-            onReplacementUpdate={setStationReplacements}
-            onStationIntensityUpdate={setStationIntensities}
-          />
+          {view === 'waveform' ? (
+            <RealtimeWaveformDeck
+              wavePackets={wavePackets}
+              onStationIntensityUpdate={setStationIntensities}
+              displayStations={displayStations}
+              stationMap={stationMap}
+              title={waveformTitle}
+            />
+          ) : (
+            <StationSelection
+              allStations={stationMap}
+              activeStations={displayStations}
+              selectionMode={selectionMode}
+              onSelectionChange={handleSelectionChange}
+              onViewChange={setView}
+            />
+          )}
         </div>
       </div>
     </div>

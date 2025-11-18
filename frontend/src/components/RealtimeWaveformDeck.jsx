@@ -1,23 +1,10 @@
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import PropTypes from 'prop-types'
-import Papa from 'papaparse'
 import DeckGL from '@deck.gl/react'
 import { OrthographicView } from '@deck.gl/core'
 import { PathLayer, TextLayer } from '@deck.gl/layers'
 import './RealtimeWaveformDeck.css'
-import { getIntensityColor } from '../utils'
-
-// 所有測站列表 - 按緯度排列顯示
-const EEW_TARGETS = [
-  'NOU', 'TIPB', 'ILA', 'TWC', 'ENT',
-  'HWA', 'EGFH', 'EYUL', 'TTN', 'ECS', 'TAWH', 'HEN',
-  'TAP', 'A024', 'NTS', 'NTY', 'NCU', 'B011',
-  'HSN1', 'HSN', 'NJD', 'B131', 'TWQ1', 'B045',
-  'TCU', 'WDJ', 'WHP', 'WNT1', 'WPL', 'WHY',
-  'WCHH', 'WYL', 'WDL', 'WSL', 'CHY1', 'C095', 'WCKO',
-  'TAI', 'C015', 'CHN1', 'KAU', 'SCS', 'SPT', 'SSD',
-  'PNG', 'KNM', 'MSU'
-]
+import { getIntensityColor, pgaToIntensity, extractStationCode } from '../utils'
 
 const LAT_MAX = 25.4
 const LAT_MIN = 21.8 // 涵蓋整個台灣（包括離島）
@@ -25,57 +12,6 @@ const LAT_MIN = 21.8 // 涵蓋整個台灣（包括離島）
 // 時間軸設定
 const TIME_WINDOW = 30 // 顯示 30 秒的數據
 const SAMPLE_RATE = 100 // 100 Hz
-
-/**
- * 檢查測站是否為 TSMIP 格式 (Axxx, Bxxx, Cxxx)
- */
-function isTSMIPStation(stationCode) {
-  return /^[ABCDEFGH]\d{3}$/.test(stationCode)
-}
-
-/**
- * 將 PGA (gal) 轉換為台灣震度級數
- * 此函式為後端 Python `calculate_intensity` 邏輯的直接 JavaScript 轉譯，
- * 以確保前後端計算標準完全一致。
- * @param {number} pga - PGA 值，單位為 gal (m/s²)。
- */
-function pgaToIntensity(pga) {
-  if (pga <= 0) {
-    return "0";
-  }
-
-  // 後端使用的 pga_level 陣列 (單位: m/s^2)
-  const pga_level = [1e-5, 0.008, 0.025, 0.080, 0.250, 0.80, 1.4, 2.5, 4.4, 8.0];
-  const intensity_label = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
-
-  // 後端使用 log10 進行比較，前端在此完全複製此行為
-  const log_pga = Math.log10(pga);
-
-  // 模擬 Python 的 bisect.bisect
-  let intensity_index = 0;
-  for (let i = 0; i < pga_level.length; i++) {
-    // 直接比較 log 值
-    if (log_pga >= Math.log10(pga_level[i])) {
-      intensity_index = i;
-    } else {
-      break;
-    }
-  }
-
-  return intensity_label[intensity_index];
-}
-
-/**
- * 從 SEED 格式提取測站代碼
- */
-function extractStationCode(seedName) {
-  if (!seedName) return seedName
-  const parts = seedName.split('.')
-  if (parts.length >= 2) {
-    return parts[1]
-  }
-  return seedName
-}
 
 /**
  * DeckGL 波形面板組件 - 使用 memo 優化
@@ -505,12 +441,8 @@ GeographicWavePanel.propTypes = {
   renderTrigger: PropTypes.number.isRequired
 }
 
-function RealtimeWaveformDeck({ wavePackets, socket, onReplacementUpdate, onStationIntensityUpdate }) {
-  const [stationMap, setStationMap] = useState({})
+function RealtimeWaveformDeck({ wavePackets, onStationIntensityUpdate, displayStations, stationMap, title }) {
   const [waveDataMap, setWaveDataMap] = useState({})
-  const [useNearestTSMIP, setUseNearestTSMIP] = useState(false) // 是否啟用自動尋找最近 TSMIP 測站
-  const [stressTestMode, setStressTestMode] = useState(false); // 壓力測試模式
-  const [nearestStationCache, setNearestStationCache] = useState({}) // 緩存最近測站的映射
   const [renderTrigger, setRenderTrigger] = useState(Date.now()) // 使用時間戳作為觸發器
   const [stationIntensities, setStationIntensities] = useState({}) // 測站震度數據
   const panelRef = useRef(null)
@@ -519,131 +451,6 @@ function RealtimeWaveformDeck({ wavePackets, socket, onReplacementUpdate, onStat
     width: 1200,
     height: 800
   })
-
-  // 建立測站快速查找 Map
-  useEffect(() => {    
-    // 改為讀取本地的 site_info.csv
-    Papa.parse('/site_info.csv', {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        const stationData = results.data;
-        const stationMap = {};
-        stationData.forEach(s => {
-          // 確保 station code 存在且不重複，以最後出現的為準
-          if (s.Station) {
-            stationMap[s.Station] = {
-              station: s.Station,
-              latitude: parseFloat(s.Latitude),
-              longitude: parseFloat(s.Longitude),
-            };
-          }
-        });
-        setStationMap(stationMap);
-        console.log('📍 [Deck] stationMap updated:', Object.keys(stationMap).length, 'stations from site_info.csv');
-      },
-      error: (err) => console.error('❌ Failed to load site_info.csv:', err)
-    });
-  }, [])
-
-  // 當啟用自動替換時，為每個 CWASN 測站查找最近的 TSMIP 測站
-  useEffect(() => {
-    if (!useNearestTSMIP || Object.keys(stationMap).length === 0) {
-      setNearestStationCache({})
-      return
-    }
-
-    const fetchNearestStations = async () => {
-      const cache = {}
-      const MAX_DISTANCE_KM = 5 // 最大替換距離：5 公里
-      const FALLBACK_DISTANCE_KM = 10 // 如果找不到，放寬到 10 公里
-
-      for (const stationCode of EEW_TARGETS) {
-        const station = stationMap[stationCode]
-
-        // 如果測站不存在，跳過
-        if (!station) {
-          continue
-        }
-
-        // 如果已經是 TSMIP 格式，跳過
-        if (isTSMIPStation(stationCode)) {
-          continue
-        }
-
-        // 如果沒有經緯度，跳過
-        if (!station.latitude || !station.longitude) {
-          continue
-        }
-
-        try {
-          // 先嘗試查找 5 公里內的測站（返回前 5 個候選）
-          const response = await fetch(
-            `/api/find-nearest-station?lat=${station.latitude}&lon=${station.longitude}&exclude_pattern=CWASN&max_count=5`
-          )
-
-          if (response.ok) {
-            const nearestStations = await response.json()
-
-            if (nearestStations && nearestStations.length > 0) {
-              // 優先選擇距離在限制內的測站
-              let selectedStation = nearestStations.find(s => s.distance_km <= MAX_DISTANCE_KM)
-
-              // 如果沒有找到足夠近的，嘗試放寬限制
-              if (!selectedStation) {
-                selectedStation = nearestStations.find(s => s.distance_km <= FALLBACK_DISTANCE_KM)
-              }
-
-              // 如果還是沒有，只有在距離合理的情況下才使用最近的
-              if (!selectedStation && nearestStations[0].distance_km <= 15) {
-                selectedStation = nearestStations[0]
-                console.warn(`⚠️ [替換] ${stationCode} 距離較遠: ${nearestStations[0].distance_km} km`)
-              }
-
-              if (selectedStation) {
-                cache[stationCode] = {
-                  originalStation: stationCode,
-                  replacementStation: selectedStation.station,
-                  distance: selectedStation.distance_km,
-                  coordinates: {
-                    lat: selectedStation.latitude,
-                    lon: selectedStation.longitude
-                  }
-                }
-
-                const emoji = selectedStation.distance_km <= MAX_DISTANCE_KM ? '✅' :
-                             selectedStation.distance_km <= FALLBACK_DISTANCE_KM ? '⚠️' : '❌'
-                console.log(`${emoji} [替換] ${stationCode} → ${selectedStation.station} (距離: ${selectedStation.distance_km} km)`)
-              } else {
-                console.log(`❌ [跳過] ${stationCode}: 最近測站距離過遠 (${nearestStations[0].distance_km} km)`)
-              }
-            }
-          }
-        } catch (error) {
-          console.error(`❌ 無法為 ${stationCode} 查找最近測站:`, error)
-        }
-      }
-
-      setNearestStationCache(cache)
-      console.log('✅ 最近測站映射已建立:', Object.keys(cache).length, '個替換')
-
-      // 統計距離分佈
-      const distances = Object.values(cache).map(r => r.distance)
-      if (distances.length > 0) {
-        const avgDistance = (distances.reduce((a, b) => a + b, 0) / distances.length).toFixed(2)
-        const maxDistance = Math.max(...distances).toFixed(2)
-        console.log(`📊 替換距離統計: 平均 ${avgDistance} km, 最大 ${maxDistance} km`)
-      }
-
-      // 通知父組件替換信息已更新
-      if (onReplacementUpdate) {
-        onReplacementUpdate(cache)
-      }
-    }
-
-    fetchNearestStations()
-  }, [useNearestTSMIP, stationMap, onReplacementUpdate])
 
   // --- 優化：使用 requestAnimationFrame 實現平滑滾動 ---
   useEffect(() => {
@@ -850,183 +657,11 @@ function RealtimeWaveformDeck({ wavePackets, socket, onReplacementUpdate, onStat
     }
   }, [])
 
-  // 根據模式動態計算顯示的測站列表
-  const displayStations = useMemo(() => {
-    if (stressTestMode) {
-      // 壓力測試模式：根據收到的數據動態排序
-      const receivedStations = Object.keys(waveDataMap);
-      return receivedStations.sort((a, b) => {
-        const latA = stationMap[a]?.latitude ?? -Infinity;
-        const latB = stationMap[b]?.latitude ?? -Infinity;
-        return latB - latA; // 緯度高的在前面 (北方)
-      });
-    }
-    if (!useNearestTSMIP || Object.keys(nearestStationCache).length === 0) {
-      return EEW_TARGETS
-    }
-
-    // 替換模式：將 CWASN 測站替換為最近的 TSMIP 測站
-    return EEW_TARGETS.map(stationCode => {
-      const replacement = nearestStationCache[stationCode]
-      return replacement ? replacement.replacementStation : stationCode
-    })
-  }, [useNearestTSMIP, nearestStationCache, stressTestMode, waveDataMap, stationMap])
-
-  // 通知父組件壓力測試模式下的測站列表
-  useEffect(() => {
-    if (stressTestMode) {
-      const dynamicStationMap = {};
-      for (const station of displayStations) {
-        const stationInfo = stationMap[station];
-        if (stationInfo) {
-          // 偽裝成替換地圖，讓父組件（地圖）知道要顯示這些測站
-          dynamicStationMap[station] = {
-            originalStation: station,
-            replacementStation: station,
-            distance: 0,
-            coordinates: {
-              lat: stationInfo.latitude,
-              lon: stationInfo.longitude
-            }
-          };
-        }
-      }
-      if (onReplacementUpdate) {
-        onReplacementUpdate(dynamicStationMap);
-      }
-    } else {
-        // 退出壓力測試時，如果不在 TSMIP 模式，則清空替換地圖
-        if (!useNearestTSMIP && onReplacementUpdate) {
-            onReplacementUpdate({});
-        }
-    }
-  }, [displayStations, stressTestMode, onReplacementUpdate, useNearestTSMIP, stationMap]);
-
-  // 自動訂閱當前顯示的測站
-  useEffect(() => {
-    // 確保 socket 存在且處於開啟狀態
-    if (!socket || socket.readyState !== WebSocket.OPEN) return
-
-    const subscribe = () => {
-      let stationsToSubscribe;
-      if (stressTestMode) {
-        stationsToSubscribe = ['__ALL_Z__'];
-        console.log('📡 Subscribing to stress test: all Z channels');
-      } else {
-        // 對於非壓力測試模式，只在 displayStations 列表非空時才訂閱
-        if (displayStations.length > 0) {
-          stationsToSubscribe = displayStations;
-          console.log('📡 Subscribed to', displayStations.length, 'stations:', displayStations.slice(0, 10), '...')
-        } else {
-          return; // 如果列表為空，則不發送訂閱
-        }
-      }
-
-      const payload = {
-        event: 'subscribe_stations',
-        data: {
-          stations: stationsToSubscribe
-        }
-      };
-      socket.send(JSON.stringify(payload));
-    }
-
-    subscribe();
-
-    // 清理函數：組件卸載時取消訂閱和事件監聽
-    return () => {
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ event: 'subscribe_stations', data: { stations: [] } }));
-        console.log('📡 Unsubscribed from all stations')
-      }
-    }
-  }, [socket, displayStations, stressTestMode])
-
-  const handleToggleTSMIP = () => {
-    // 清空當前的震度數據，以立即更新地圖
-    if (onStationIntensityUpdate) {
-      onStationIntensityUpdate({});
-    }
-    // 清空本地波形數據，避免顯示舊數據
-    setWaveDataMap({});
-    // 切換模式
-    setUseNearestTSMIP(!useNearestTSMIP);
-    // 確保壓力測試模式被關閉
-    setStressTestMode(false);
-  };
-
-  const handleStressTest = () => {
-    if (onStationIntensityUpdate) {
-      onStationIntensityUpdate({});
-    }
-    setWaveDataMap({});
-    setUseNearestTSMIP(false);
-    setStressTestMode(!stressTestMode); // 切換壓力測試模式
-  };
-
   return (
     <div className="realtime-waveform geographic">
-      <div className="waveform-controls" style={{
-        padding: '10px 20px',
-        background: 'rgba(255, 255, 255, 0.05)',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '15px'
-      }}>
-        <button
-          onClick={handleToggleTSMIP}
-          style={{
-            padding: '8px 16px',
-            background: useNearestTSMIP ? '#4CAF50' : '#2196F3',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: '500',
-            transition: 'all 0.3s ease',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-          }}
-          onMouseEnter={(e) => {
-            e.target.style.transform = 'translateY(-1px)'
-            e.target.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)'
-          }}
-          onMouseLeave={(e) => {
-            e.target.style.transform = 'translateY(0)'
-            e.target.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)'
-          }}
-        >
-          {useNearestTSMIP ? '✅ TSMIP 已啟用' : '🔄 替換 TSMIP 測站'}
-        </button>
-        <button
-          onClick={handleStressTest}
-          style={{
-            padding: '8px 16px',
-            background: stressTestMode ? '#f44336' : '#9E9E9E',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: '500',
-            transition: 'all 0.3s ease',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-          }}
-        >
-          {stressTestMode ? '🛑 停止壓力測試' : '⚡ 壓力測試 (All Z)'}
-        </button>
-        <span style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '13px' }}>
-          {useNearestTSMIP
-            ? `自動替換為 5km 內最近的 TSMIP 測站 (已替換 ${Object.keys(nearestStationCache).length} 個測站)`
-            : stressTestMode
-            ? '顯示所有測站的 Z 軸波形'
-            : '使用原始 CWASN 測站配置'}
-        </span>
-      </div>
       <div ref={panelRef} className="waveform-panel-container" style={{ flex: 1, overflow: 'hidden' }}>
         <GeographicWavePanel
-          title={stressTestMode ? `壓力測試：所有 Z 軸波形 (${displayStations.length} 站)` : `全台 PWS 參考點 ${useNearestTSMIP ? '(TSMIP 替換)' : ''}`}
+          title={title}
           stations={displayStations}
           stationMap={stationMap}
           waveDataMap={waveDataMap}
@@ -1044,9 +679,10 @@ function RealtimeWaveformDeck({ wavePackets, socket, onReplacementUpdate, onStat
 
 RealtimeWaveformDeck.propTypes = {
   wavePackets: PropTypes.array.isRequired,
-  socket: PropTypes.object,
-  onReplacementUpdate: PropTypes.func,
-  onStationIntensityUpdate: PropTypes.func
+  onStationIntensityUpdate: PropTypes.func,
+  displayStations: PropTypes.array.isRequired,
+  stationMap: PropTypes.object.isRequired,
+  title: PropTypes.string.isRequired,
 }
 
 export default RealtimeWaveformDeck

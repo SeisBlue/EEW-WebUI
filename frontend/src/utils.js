@@ -34,3 +34,45 @@ export function getIntensityColor(intensity) {
     default: return [148, 163, 184];      // #94a3b8 灰色（未知）
   }
 }
+
+/**
+ * 檢查測站是否為 TSMIP 格式 (Axxx, Bxxx, Cxxx)
+ * @param {string} stationCode
+ */
+export function isTSMIPStation(stationCode) {
+  return /^[ABCDEFGH]\d{3}$/.test(stationCode);
+}
+
+/**
+ * 將 PGA (gal, cm/s^2) 轉換為台灣震度級數。
+ * 根據台灣中央氣象署的震度分級標準。
+ * @param {number} pga - 地動加速度峰值，單位為 gal (cm/s^2)。
+ */
+export function pgaToIntensity(pga) {
+  if (pga < 0.2) return "0"; // 氣象署未定義0級，但實務上需要一個基準
+  if (pga < 0.8) return "0"; // 0.2-0.8 仍為 0 級
+  if (pga < 2.5) return "1";
+  if (pga < 8.0) return "2";
+  if (pga < 25) return "3";
+  if (pga < 80) return "4";
+  if (pga < 140) return "5-";
+  if (pga < 250) return "5+";
+  if (pga < 440) return "6-";
+  if (pga < 800) return "6+";
+  return "7";
+}
+
+
+/**
+ * 從 SEED 格式提取測站代碼
+ * @param {string} seedName - e.g., "TW.HSN1..BHZ"
+ * @returns {string} - e.g., "HSN1"
+ */
+export function extractStationCode(seedName) {
+  if (!seedName) return seedName;
+  const parts = seedName.split('.');
+  if (parts.length >= 2) {
+    return parts[1];
+  }
+  return seedName;
+}

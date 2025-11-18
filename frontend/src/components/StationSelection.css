@@ -1,0 +1,186 @@
+.station-selection-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-lg);
+}
+
+.station-selection-panel .panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border-base);
+  padding-bottom: var(--spacing-sm);
+}
+
+.station-selection-panel .panel-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: var(--color-text-primary);
+}
+
+.back-button {
+  background: none;
+  border: 1px solid var(--color-border-base);
+  color: var(--color-text-secondary);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.back-button:hover {
+  background-color: var(--color-bg-glass-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-primary);
+}
+
+.selection-presets {
+  margin-bottom: var(--spacing-md);
+  background-color: var(--color-bg-glass);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-base);
+}
+
+.selection-presets h4 {
+  margin-top: 0;
+  margin-bottom: var(--spacing-sm);
+  color: var(--color-text-secondary);
+}
+
+.preset-buttons {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-sm);
+}
+
+.preset-button {
+  flex-grow: 1;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: 14px;
+  background-color: var(--color-bg-glass-active);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-base);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.preset-button:hover {
+  background-color: var(--color-bg-glass-hover);
+  border-color: var(--color-primary-light);
+  color: var(--color-text-primary);
+}
+
+.preset-button.active {
+  background-color: var(--color-primary);
+  color: var(--white);
+  border-color: var(--color-primary);
+}
+
+.preset-info {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  min-height: 2em;
+}
+
+.selection-list-container {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg-dark);
+  border-radius: var(--radius-md);
+}
+
+.list-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background-color: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-base);
+}
+
+.list-control-button {
+  margin-left: var(--spacing-xs);
+  padding: 5px 10px;
+  background-color: var(--color-success);
+  color: var(--white);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.list-control-button:hover {
+  opacity: 0.9;
+}
+
+.station-list {
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+.station-list table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.station-list th, .station-list td {
+  padding: var(--spacing-xs);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-base);
+}
+
+.station-list th {
+  background-color: var(--color-bg-panel);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.station-list tbody tr {
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.station-list tbody tr:hover {
+  background-color: var(--color-bg-glass-hover);
+}
+
+.station-list tbody tr.selected {
+  background-color: var(--color-primary-bg);
+}
+
+.station-list input[type="checkbox"] {
+  pointer-events: none;
+}
+
+.panel-footer {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-border-base);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.apply-button {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: 16px;
+  font-weight: bold;
+  background-color: var(--color-success);
+  color: var(--white);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.apply-button:hover {
+  background-color: color-mix(in srgb, var(--color-success) 90%, black);
+}
