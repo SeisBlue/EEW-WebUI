@@ -27,6 +27,7 @@ import multiprocessing as mp
 import sys
 from pprint import pprint
 from datetime import datetime
+import redis
 
 # ---- Configuration: edit for your environment ----
 earthworm_param = {
@@ -64,6 +65,12 @@ MSG_TYPE_MAP = {
     "pick": 0,
     "eew": 0,
 
+}
+
+redis_config = {
+    "host": "localhost",
+    "port": 6379,
+    "db": 0,
 }
 # -------------------------------------------------
 
@@ -103,29 +110,41 @@ def parse_text_message(b):
         return ("binary", f"len={len(b)} hex-prefix={b[:64].hex()}...")
 
 
-def loading_animation(res):
+def loading_animation(res, msg_id):
     sys.stdout.write("\r" + " " * 88 + "\r")
     sys.stdout.flush()
     wave_endt = res["endt"]
+    station = res["station"]
+    channel = res["channel"]
 
     wave_timestring = datetime.fromtimestamp(float(wave_endt)).strftime(
         "%Y-%m-%d %H:%M:%S.%f"
     )
 
     delay = time.time() - wave_endt
+    stream_key = f"wave:{station}:{channel}"
 
     # 顯示目前的 loading 字符
     sys.stdout.write(
-        f"wave {wave_timestring[:-3]}  lag:{delay:.3f}s "
+        f"Redis xadd {stream_key} {msg_id.decode()} {wave_timestring[:-3]}  lag:{delay:.3f}s "
     )
     sys.stdout.flush()
 
-def worker_wave(rname, ringid, modid, instid, poll_delay):
+def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
     """
     Worker that uses EWModule to add a ring and call get_wave (which does the Trace parsing).
     We create a short-lived EWModule for each worker and call add_ring + get_wave.
+    This worker also writes the received wave data to a Redis Stream.
     """
     print(f"[wave worker] {rname}={ringid} starting")
+    try:
+        redis_client = redis.Redis(**redis_cfg)
+        redis_client.ping()
+        print(f"[wave worker] {rname}={ringid} connected to Redis.")
+    except Exception as e:
+        print(f"[wave worker] {rname}={ringid} could not connect to Redis: {e}", file=sys.stderr)
+        return
+
     # hb_time arbitrary (heartbeat thread will run); debug False
     module = EWModule(def_ring=1000, mod_id=modid, inst_id=instid, hb_time=15, db=False)
     module.add_ring(ringid)
@@ -134,7 +153,31 @@ def worker_wave(rname, ringid, modid, instid, poll_delay):
         while True:
             res = module.get_wave(buf_index)
             if res:
-                loading_animation(res)
+                station = res.get('station')
+                channel = res.get('channel')
+
+                if station and channel:
+                    stream_key = f"wave:{station}:{channel}"
+                    
+                    # Prepare data for Redis Stream. NumPy array must be converted to bytes.
+                    message_payload = {k: v for k, v in res.items() if k != 'data'}
+                    if 'data' in res and res['data'] is not None:
+                        message_payload['data'] = res['data'].tobytes()
+
+                    # Add to Redis Stream
+                    msg_id = redis_client.xadd(stream_key, message_payload)
+
+                    stream_trim_seconds = 30
+                    min_id_timestamp = int((time.time() - stream_trim_seconds) * 1000)
+                    try:
+                        # 使用原生命令確保傳入正確參數：XTRIM <key> MINID ~ <ms>-0
+                        redis_client.execute_command('XTRIM', stream_key, 'MINID', '~',
+                                                     f'{min_id_timestamp}-0')
+                    except Exception as e:
+                        print(f"[wave worker] {rname}={ringid} xtrim failed: {e}",
+                              file=sys.stderr)
+
+                    loading_animation(res, msg_id)
             else:
                 time.sleep(poll_delay)
     except KeyboardInterrupt:
@@ -214,7 +257,7 @@ def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
     # waves: for each ring defined, spawn worker_wave
     for rname, ringid in profile_cfg.get("wave", {}).items():
         p = mp.Process(target=worker_wave,
-                       args=(profile_name, ringid, mod_id, inst_id, poll_delay))
+                       args=(profile_name, ringid, mod_id, inst_id, poll_delay, redis_config))
         p.daemon = True
         p.start()
         procs.append(p)
@@ -283,7 +326,7 @@ if __name__ == "__main__":
         description="Multi-category PyEW ring reader (print-only).")
     parser.add_argument("--env", "-e", nargs="+",
                         help="Which profiles to run (from earthworm_param).")
-    parser.add_argument("--delay", "-d", type=float, default=0.001,
+    parser.add_argument("--delay", "-d", type=float, default=0.01,
                         help="Poll delay when no message (s).")
     args = parser.parse_args()
 
