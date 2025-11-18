@@ -7,6 +7,8 @@ import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from loguru import logger
 import uvicorn
+import pandas as pd
+from scipy.signal import detrend, iirfilter, sosfilt, zpk2sos
 
 # --- Redis 和 FastAPI 配置 ---
 REDIS_CONFIG = {
@@ -158,20 +160,30 @@ async def redis_wave_reader():
                     if not waveform_bytes:
                         continue
                     
-                    # 假設 dtype 是 int32，這與 PyEW 預設一致
-                    waveform = np.frombuffer(waveform_bytes, dtype=np.int32)
+                    # 1. 從 bytes 轉回 numpy array
+                    # reader_pyew_to_redis.py 寫入的是原始 int32 資料
+                    waveform_raw = np.frombuffer(waveform_bytes, dtype=np.int32)
                     
-                    # 組合前端需要的 SCNL 格式 ID
-                    # 這裡的 'SM' 和 '01' 是基於 eew_backend.py 的假設
+                    # 2. 取得儀器校正值並轉換單位
+                    wave_meta = {'station': station, 'channel': channel, 'network': msg_data.get(b'network', b'TW').decode('utf-8')}
+                    wave_meta = convert_to_tsmip_legacy_naming(wave_meta) # 處理命名轉換
+                    constant = get_wave_constant(wave_meta)
+                    waveform_processed = waveform_raw * constant
+
+                    # 3. 進行訊號處理
+                    waveform_processed = signal_processing(waveform_processed)
+                    if waveform_processed is None:
+                        continue
+
+                    # 4. 組合前端需要的 SCNL 格式 ID
                     network = msg_data.get(b'network', b'SM').decode('utf-8')
                     location = msg_data.get(b'location', b'01').decode('utf-8')
                     wave_id = f"{network}.{station}.{location}.{channel}"
 
-                    # 計算 PGA (簡易版：取絕對值的最大值)
-                    pga = float(np.max(np.abs(waveform))) if waveform.size > 0 else 0.0
+                    pga = float(np.max(np.abs(waveform_processed))) if waveform_processed.size > 0 else 0.0
 
                     wave_batch[wave_id] = {
-                        "waveform": waveform.tolist(),
+                        "waveform": waveform_processed.tolist(),
                         "pga": pga,
                         "startt": float(msg_data.get(b'startt', b'0')),
                         "endt": float(msg_data.get(b'endt', b'0')),
@@ -192,6 +204,71 @@ async def redis_wave_reader():
             # 發生錯誤時等待一下，避免快速循環
             await asyncio.sleep(1)
 
+
+# Load site info
+site_info_file = "/workspace/station/site_info.csv"
+try:
+    logger.info(f"Loading {site_info_file}...")
+    site_info = pd.read_csv(site_info_file)
+    constant_dict = site_info.set_index(["Station", "Channel"])["Constant"].to_dict()
+    logger.info(f"{site_info_file} loaded")
+
+except FileNotFoundError:
+    logger.warning(f"{site_info_file} not found")
+
+
+def join_id_from_dict(data, order="NSLC"):
+    code = {"N": "network", "S": "station", "L": "location", "C": "channel"}
+    data_id = ".".join(data[code[letter]] for letter in order)
+    return data_id
+
+
+def convert_to_tsmip_legacy_naming(wave):
+    if wave["network"] == "TW":
+        wave["network"] = "SM"
+        wave["location"] = "01"
+    return wave
+
+
+def get_wave_constant(wave):
+    # count to cm/s^2
+    try:
+        wave_constant = constant_dict[wave["station"], wave["channel"]]
+
+    except Exception as e:
+        logger.debug(
+            f"{wave['station']} not found in site_info.txt, use default 3.2e-6"
+        )
+        wave_constant = 3.2e-6
+
+    return wave_constant
+
+def signal_processing(waveform):
+    try:
+        # demean and lowpass filter
+        data = detrend(waveform, type="constant")
+        data = lowpass(data, freq=10)
+
+        return data
+
+    except Exception as e:
+        logger.error(f"signal_processing error: {e}")
+
+
+def lowpass(data, freq=10, df=100, corners=4):
+    """
+    Modified form ObsPy Signal Processing
+    https://docs.obspy.org/_modules/obspy/signal/filter.html#lowpass
+    """
+    fe = 0.5 * df
+    f = freq / fe
+
+    if f > 1:
+        f = 1.0
+    z, p, k = iirfilter(corners, f, btype="lowpass", ftype="butter", output="zpk")
+    sos = zpk2sos(z, p, k)
+
+    return sosfilt(sos, data)
 
 @app.on_event("startup")
 async def startup_event():
