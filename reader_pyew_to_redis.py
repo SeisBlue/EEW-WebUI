@@ -16,6 +16,7 @@ Notes:
 import os
 import asyncio
 import json
+import sys
 import time
 import logging
 from typing import Tuple
@@ -33,7 +34,7 @@ except Exception as e:
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379")
 STREAM_KEY = os.getenv("STREAM_KEY", "waves")
-QUEUE_MAXSIZE = int(os.getenv("QUEUE_MAXSIZE", "100000"))
+QUEUE_MAXSIZE = int(os.getenv("QUEUE_MAXSIZE", "10000000"))
 BATCH_MAX = int(os.getenv("BATCH_MAX", "1000"))
 BATCH_TIMEOUT = float(os.getenv("BATCH_TIMEOUT", "0.05"))
 EW_DEF_RING = int(os.getenv("EW_DEF_RING", "1000"))
@@ -177,12 +178,15 @@ async def main():
                 if not meta:
                     meta = {"datatype": "i2", "nsamp": len(payload_bytes) // 2, "pub_time": time.time()}
 
+                print(meta, payload_bytes)
+                sys.stdout.flush()
                 # push into queue (non-blocking with drop policy to avoid blocking reader)
                 try:
                     queue.put_nowait((meta, payload_bytes))
                 except asyncio.QueueFull:
                     # drop policy: drop this message (or you could pop oldest and push)
-                    logger.warning("Queue full, dropping message for station %s", meta.get("station", "N/A"))
+                    pass
+                    # logger.warning("Queue full, dropping message for station %s", meta.get("station", "N/A"))
                     # increment a metric or alert as needed
 
             except KeyboardInterrupt:
