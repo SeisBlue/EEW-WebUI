@@ -24,8 +24,9 @@ Notes:
 import time
 import argparse
 import multiprocessing as mp
-import struct
+import sys
 from pprint import pprint
+from datetime import datetime
 
 # ---- Configuration: edit for your environment ----
 earthworm_param = {
@@ -102,6 +103,23 @@ def parse_text_message(b):
         return ("binary", f"len={len(b)} hex-prefix={b[:64].hex()}...")
 
 
+def loading_animation(res):
+    sys.stdout.write("\r" + " " * 88 + "\r")
+    sys.stdout.flush()
+    wave_endt = res["endt"]
+
+    wave_timestring = datetime.fromtimestamp(float(wave_endt)).strftime(
+        "%Y-%m-%d %H:%M:%S.%f"
+    )
+
+    delay = time.time() - wave_endt
+
+    # 顯示目前的 loading 字符
+    sys.stdout.write(
+        f"wave {wave_timestring[:-3]}  lag:{delay:.3f}s "
+    )
+    sys.stdout.flush()
+
 def worker_wave(rname, ringid, modid, instid, poll_delay):
     """
     Worker that uses EWModule to add a ring and call get_wave (which does the Trace parsing).
@@ -116,7 +134,7 @@ def worker_wave(rname, ringid, modid, instid, poll_delay):
         while True:
             res = module.get_wave(buf_index)
             if res:
-                pretty_print_wave(res)
+                loading_animation(res)
             else:
                 time.sleep(poll_delay)
     except KeyboardInterrupt:
@@ -167,7 +185,6 @@ def worker_text_or_binary(rname, ringid, modid, instid, msg_type, poll_delay,
                 print(
                     f"{category.upper()} message from {rname} {ringid} (status={status}, rlen={rlen}, kind={kind}):")
                 print(body)
-                print("-" * 78)
             else:
                 time.sleep(poll_delay)
     except KeyboardInterrupt:
