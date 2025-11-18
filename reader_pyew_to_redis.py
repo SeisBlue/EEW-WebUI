@@ -27,18 +27,6 @@ import multiprocessing as mp
 import struct
 from pprint import pprint
 
-"""
- Ring   WAVE_RING_CWASN  1000    # public waveform data
- Ring   PICK_RING        1005    # public parametric data
- Ring   HYPO_RING        1015    # public hypocenters etc.
- Ring   BINDER_RING      1020    # private buffer for binder_ew
- Ring   EQALARM_EW_RING  1025    # private buffer for eqalam_ew
- Ring   WAVE_RING_TSMIP  1030    # DST drink messages
- Ring   EEW_RING         1035    # A/D waveform ring
- Ring   CUBIC_RING       1036    # private buffer for cubic_msg
- Ring   STATUS_RING      1040    # Ring for status messages
-"""
-
 # ---- Configuration: edit for your environment ----
 earthworm_param = {
     "test": {
@@ -72,7 +60,7 @@ earthworm_param = {
 # <-- put the actual integer type for pick messages, or leave None for text attempt
 MSG_TYPE_MAP = {
     "wave": 19,  # standard TRACEBUF/TRACE2
-    "pick": 150,
+    "pick": 0,
     "eew": 0,
 
 }
@@ -128,8 +116,7 @@ def worker_wave(rname, ringid, modid, instid, poll_delay):
         while True:
             res = module.get_wave(buf_index)
             if res:
-                # pretty_print_wave(res)
-                pass
+                pretty_print_wave(res)
             else:
                 time.sleep(poll_delay)
     except KeyboardInterrupt:
