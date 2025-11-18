@@ -6,7 +6,7 @@ import RealtimeWaveformDeck from './components/RealtimeWaveformDeck';
 import StationSelection from './components/StationSelection.jsx';
 import { getIntensityColor, pgaToIntensity, extractStationCode } from './utils';
 
-const TIME_WINDOW = 30; // Seconds
+const TIME_WINDOW = 60; // Seconds
 
 // 所有測站列表 - 按緯度排列顯示
 const EEW_TARGETS = [
@@ -353,6 +353,7 @@ function App() {
               displayStations={displayStations}
               stationMap={stationMap}
               title={waveformTitle}
+              timeWindow={TIME_WINDOW}
             />
           ) : (
             <StationSelection

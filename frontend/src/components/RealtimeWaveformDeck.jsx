@@ -5,17 +5,16 @@ import { OrthographicView } from '@deck.gl/core'
 import { PathLayer, TextLayer } from '@deck.gl/layers'
 import './RealtimeWaveformDeck.css'
 
-const LAT_MAX = 25.4
+const LAT_MAX = 26.0
 const LAT_MIN = 21.8 // 涵蓋整個台灣（包括離島）
 
 // 時間軸設定
-const TIME_WINDOW = 30 // 顯示 30 秒的數據
 const SAMPLE_RATE = 100 // 100 Hz
 
 /**
  * DeckGL 波形面板組件 - 使用 memo 優化
  */
-const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations, stationMap, waveDataMap, latMin, latMax, simpleLayout, panelWidth, panelHeight, renderTrigger }) {
+const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations, stationMap, waveDataMap, latMin, latMax, simpleLayout, panelWidth, panelHeight, renderTrigger, timeWindow }) {
   const [hoveredStation] = useState(null)
 
   const minLat = latMin ?? LAT_MIN
@@ -86,7 +85,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
           const endTimeDiff = endTimestamp ? now - endTimestamp : timeDiff
 
           // 如果整個數據段都在時間窗口之外，跳過
-          if (endTimeDiff > TIME_WINDOW * 1000 || timeDiff < 0) return
+          if (endTimeDiff > timeWindow * 1000 || timeDiff < 0) return
 
           const pathPoints = []
 
@@ -101,9 +100,9 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
             const sampleTimeDiff = now - sampleTime
             const sampleTimeOffset = sampleTimeDiff / 1000  // 轉換為秒
 
-            if (sampleTimeOffset < 0 || sampleTimeOffset > TIME_WINDOW) continue
+            if (sampleTimeOffset < 0 || sampleTimeOffset > timeWindow) continue
 
-            const x = xOffset + waveWidth * (1 - sampleTimeOffset / TIME_WINDOW)
+            const x = xOffset + waveWidth * (1 - sampleTimeOffset / timeWindow)
             const normalizedValue = values[idx] / displayScale
             const clampedValue = Math.max(-1, Math.min(1, normalizedValue))
             const y = centerY - clampedValue * (waveHeight / 2)
@@ -161,7 +160,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     }
 
     return layers
-  }, [stations, stationMap, waveDataMap, hoveredStation, minLat, maxLat, simpleLayout, panelWidth, panelHeight, title, renderTrigger])
+  }, [stations, stationMap, waveDataMap, hoveredStation, minLat, maxLat, simpleLayout, panelWidth, panelHeight, title, renderTrigger, timeWindow])
 
   // 文字標籤圖層 - 優化版本
   const labelLayers = useMemo(() => {
@@ -250,7 +249,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     const now = new Date(renderTrigger) // 使用 renderTrigger 的時間
 
     for (let i = 0; i < numTicks; i++) {
-      const timeValue = -i * (TIME_WINDOW / (numTicks - 1))
+      const timeValue = -i * (timeWindow / (numTicks - 1))
       const x = timeXOffset + timeWaveWidth - (i / (numTicks - 1)) * timeWaveWidth
 
       let label
@@ -297,7 +296,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
         getText: [waveDataMap, renderTrigger] // 添加 renderTrigger 以更新時間顯示
       }
     })]
-  }, [stations, stationMap, waveDataMap, hoveredStation, minLat, maxLat, simpleLayout, panelWidth, panelHeight, renderTrigger])
+  }, [stations, stationMap, waveDataMap, hoveredStation, minLat, maxLat, simpleLayout, panelWidth, panelHeight, renderTrigger, timeWindow])
 
   // 緯度網格線
   const gridLayers = useMemo(() => {
@@ -423,7 +422,8 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     prevProps.simpleLayout === nextProps.simpleLayout &&
     prevProps.panelWidth === nextProps.panelWidth &&
     prevProps.panelHeight === nextProps.panelHeight &&
-    prevProps.renderTrigger === nextProps.renderTrigger // 比較 renderTrigger
+    prevProps.renderTrigger === nextProps.renderTrigger && // 比較 renderTrigger
+    prevProps.timeWindow === nextProps.timeWindow
   )
 })
 
@@ -437,10 +437,11 @@ GeographicWavePanel.propTypes = {
   simpleLayout: PropTypes.bool,
   panelWidth: PropTypes.number.isRequired,
   panelHeight: PropTypes.number.isRequired,
-  renderTrigger: PropTypes.number.isRequired
+  renderTrigger: PropTypes.number.isRequired,
+  timeWindow: PropTypes.number.isRequired
 }
 
-function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title }) {
+function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title, timeWindow }) {
   const [renderTrigger, setRenderTrigger] = useState(Date.now()) // 使用時間戳作為觸發器
   const panelRef = useRef(null)
   const animationFrameRef = useRef() // 用於保存 requestAnimationFrame 的 ID
@@ -505,6 +506,7 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title 
           panelWidth={dimensions.width}
           panelHeight={dimensions.height}
           renderTrigger={renderTrigger}
+          timeWindow={timeWindow}
         />
       </div>
     </div>
@@ -516,6 +518,7 @@ RealtimeWaveformDeck.propTypes = {
   displayStations: PropTypes.array.isRequired,
   stationMap: PropTypes.object.isRequired,
   title: PropTypes.string.isRequired,
+  timeWindow: PropTypes.number.isRequired,
 }
 
 export default RealtimeWaveformDeck
