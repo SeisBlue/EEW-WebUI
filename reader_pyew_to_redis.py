@@ -303,7 +303,7 @@ if __name__ == "__main__":
         description="Multi-category PyEW ring reader (print-only).")
     parser.add_argument("--env", "-e", nargs="+",
                         help="Which profiles to run (from earthworm_param).")
-    parser.add_argument("--delay", "-d", type=float, default=0.001,
+    parser.add_argument("--delay", "-d", type=float, default=0.01,
                         help="Poll delay when no message (s).")
     args = parser.parse_args()
 

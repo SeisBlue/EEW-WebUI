@@ -11,7 +11,7 @@ services:
       - ./:/workspace
     ipc: host
     network_mode: host
-    command: bash -c "sleep 10 && /usr/local/bin/python /workspace/reader_pyew_to_redis.py -e jimmy"
+    command: bash -c "sleep 5 && /usr/local/bin/python /workspace/reader_pyew_to_redis.py -e jimmy"
     restart: on-failure
     depends_on:
       - earthworm
