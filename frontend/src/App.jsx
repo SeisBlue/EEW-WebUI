@@ -3,8 +3,7 @@ import './App.css';
 import Papa from 'papaparse';
 import TaiwanMap from './components/TaiwanMapDeck';
 import RealtimeWaveformDeck from './components/RealtimeWaveformDeck';
-import StationSelection from './components/StationSelection';
-import { isTSMIPStation } from './utils';
+import StationSelection from './components/StationSelection.jsx';
 
 // 所有測站列表 - 按緯度排列顯示
 const EEW_TARGETS = [
@@ -21,7 +20,7 @@ const EEW_TARGETS = [
 function App() {
   // View and selection state
   const [view, setView] = useState('waveform'); // 'waveform' or 'stationSelection'
-  const [selectionMode, setSelectionMode] = useState('default'); // 'default', 'tsmip', 'all', 'custom'
+  const [selectionMode, setSelectionMode] = useState('default'); // 'default', 'all', 'custom'
   const [customStations, setCustomStations] = useState([]);
 
   // WebSocket and data state
@@ -31,11 +30,9 @@ function App() {
   const [latestWaveTime, setLatestWaveTime] = useState(null);
 
   // Station and map state
-  const [targetStations, setTargetStations] = useState([]);
-  const [stationReplacements, setStationReplacements] = useState({});
+  const [allTargetStations, setAllTargetStations] = useState([]); // All stations from eew_target.csv
   const [stationIntensities, setStationIntensities] = useState({});
   const [stationMap, setStationMap] = useState({});
-  const [nearestStationCache, setNearestStationCache] = useState({});
   const [waveDataMapForStressTest, setWaveDataMapForStressTest] = useState({});
 
   // Load initial station metadata
@@ -48,7 +45,7 @@ function App() {
           longitude: parseFloat(s.longitude), latitude: parseFloat(s.latitude), elevation: parseFloat(s.elevation),
           status: 'unknown', lastSeen: null, pga: null,
         }));
-        setTargetStations(stations);
+        setAllTargetStations(stations);
         console.log('📍 [App] Loaded', stations.length, 'target stations from eew_target.csv');
       },
       error: (err) => console.error('❌ [App] Failed to load eew_target.csv:', err)
@@ -97,50 +94,9 @@ function App() {
     return () => { if (ws.readyState === WebSocket.OPEN) ws.close(); };
   }, [selectionMode]);
 
-  // Find nearest TSMIP stations
-  useEffect(() => {
-    if (Object.keys(stationMap).length === 0) return;
-
-    const fetchNearestStations = async () => {
-      const cache = {};
-      for (const stationCode of EEW_TARGETS) {
-        const station = stationMap[stationCode];
-        if (!station || isTSMIPStation(stationCode) || !station.latitude || !station.longitude) continue;
-        try {
-          const response = await fetch(`/api/find-nearest-station?lat=${station.latitude}&lon=${station.longitude}&exclude_pattern=CWASN&max_count=1`);
-          if (response.ok) {
-            const nearest = await response.json();
-            if (nearest?.[0] && nearest[0].distance_km <= 5) {
-              cache[stationCode] = {
-                originalStation: stationCode,
-                replacementStation: nearest[0].station,
-                distance: nearest[0].distance_km,
-                coordinates: { lat: nearest[0].latitude, lon: nearest[0].longitude }
-              };
-            }
-          }
-        } catch (error) { console.error(`❌ [App] Failed to find nearest station for ${stationCode}:`, error); }
-      }
-      setNearestStationCache(cache);
-      console.log('✅ [App] Nearest TSMIP station cache created:', Object.keys(cache).length, 'replacements found.');
-    };
-    fetchNearestStations();
-  }, [stationMap]);
-
-  // Update station replacements for the map based on selection mode
-  useEffect(() => {
-    if (selectionMode === 'tsmip') {
-      setStationReplacements(nearestStationCache);
-    } else {
-      setStationReplacements({});
-    }
-  }, [selectionMode, nearestStationCache]);
-
-  // Calculate the list of stations to display
+  // Calculate the list of stations to display in the waveform panel
   const displayStations = useMemo(() => {
     switch (selectionMode) {
-      case 'tsmip':
-        return EEW_TARGETS.map(code => nearestStationCache[code]?.replacementStation || code);
       case 'all':
         const received = Object.keys(waveDataMapForStressTest).map(s => s.split('.')[1]).filter(Boolean);
         return [...new Set(received)].sort((a, b) => (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0));
@@ -150,7 +106,18 @@ function App() {
       default:
         return EEW_TARGETS;
     }
-  }, [selectionMode, nearestStationCache, waveDataMapForStressTest, customStations, stationMap]);
+  }, [selectionMode, waveDataMapForStressTest, customStations, stationMap]);
+
+  // Calculate the list of stations to display on the map
+  const mapDisplayStations = useMemo(() => {
+    const stationSet = new Set(displayStations);
+    if (selectionMode === 'default') {
+        const targetSet = new Set(EEW_TARGETS);
+        return allTargetStations.filter(s => targetSet.has(s.station));
+    }
+    return allTargetStations.filter(s => stationSet.has(s.station));
+  }, [displayStations, selectionMode, allTargetStations]);
+
 
   // Subscribe to WebSocket station data
   useEffect(() => {
@@ -182,7 +149,6 @@ function App() {
   const waveformTitle = useMemo(() => {
     const count = displayStations.length;
     switch (selectionMode) {
-      case 'tsmip': return `全台 PWS 參考點 (TSMIP 替換) - ${count} 站`;
       case 'all': return `壓力測試：所有 Z 軸波形 (${count} 站)`;
       case 'custom': return `自訂測站列表 (${count} 站)`;
       default: return `全台 PWS 參考點 - ${count} 站`;
@@ -212,13 +178,15 @@ function App() {
           <section className="section map-section">
             <div className="section-header">
               <h2>測站分布</h2>
-              <button className="select-station-button" onClick={() => setView('stationSelection')}>
-                選擇顯示測站
+              <button 
+                className="select-station-button" 
+                onClick={() => setView(prev => prev === 'waveform' ? 'stationSelection' : 'waveform')}
+              >
+                {view === 'waveform' ? '選擇顯示測站' : '返回波形圖'}
               </button>
             </div>
             <TaiwanMap
-              stations={targetStations}
-              stationReplacements={stationReplacements}
+              stations={mapDisplayStations}
               stationIntensities={stationIntensities}
             />
           </section>

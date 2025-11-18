@@ -19,10 +19,12 @@ function StationSelection({
   const handleSelectAll = () => {
     const allStationCodes = stationDetails.map(s => s.station);
     setSelected(new Set(allStationCodes));
+    setCurrentMode('custom'); // Manual selection implies custom mode
   };
 
   const handleClearAll = () => {
     setSelected(new Set());
+    setCurrentMode('custom');
   };
 
   const handleStationToggle = (stationCode) => {
@@ -39,14 +41,16 @@ function StationSelection({
     setCurrentMode('custom');
   };
 
-  const handleApply = () => {
-    onSelectionChange(currentMode, Array.from(selected));
+  const handlePresetClick = (mode) => {
+    // For presets, apply immediately and switch view
+    onSelectionChange(mode, []); // Pass empty array, App.jsx will calculate the stations
     onViewChange('waveform');
   };
 
-  const handleModeChange = (mode) => {
-    setCurrentMode(mode);
-    // We don't change the actual selection until "Apply" is clicked
+  const handleApplyCustom = () => {
+    // The apply button is now only for custom selections
+    onSelectionChange('custom', Array.from(selected));
+    onViewChange('waveform');
   };
 
   return (
@@ -59,42 +63,35 @@ function StationSelection({
       </div>
 
       <div className="selection-presets">
-        <h4>預設選項</h4>
+        <h4>預設選項 (點擊直接套用)</h4>
         <div className="preset-buttons">
           <button
-            className={`preset-button ${currentMode === 'default' ? 'active' : ''}`}
-            onClick={() => handleModeChange('default')}
+            className={`preset-button ${selectionMode === 'default' ? 'active' : ''}`}
+            onClick={() => handlePresetClick('default')}
           >
             預設 PWS 參考點
           </button>
           <button
-            className={`preset-button ${currentMode === 'tsmip' ? 'active' : ''}`}
-            onClick={() => handleModeChange('tsmip')}
-          >
-            替換為 TSMIP
-          </button>
-          <button
-            className={`preset-button ${currentMode === 'all' ? 'active' : ''}`}
-            onClick={() => handleModeChange('all')}
+            className={`preset-button ${selectionMode === 'all' ? 'active' : ''}`}
+            onClick={() => handlePresetClick('all')}
           >
             全部 Z 軸 (壓力測試)
           </button>
         </div>
         <p className="preset-info">
-          {
+          目前模式: {
             {
-              'default': '顯示預設的 CWASN 測站列表。',
-              'tsmip': '將預設列表自動替換為 5km 內最近的 TSMIP 測站。',
+              'default': '預設的 CWASN 測站列表。',
               'all': '顯示所有接收到 Z 軸訊號的測站 (壓力測試模式)。',
               'custom': '手動選擇要顯示的測站。'
-            }[currentMode]
+            }[selectionMode]
           }
         </p>
       </div>
 
       <div className="selection-list-container">
         <div className="list-controls">
-          <span>{`已選擇 ${selected.size} / ${stationDetails.length} 個測站`}</span>
+          <span>{`手動選擇 (${selected.size} / ${stationDetails.length})`}</span>
           <div>
             <button onClick={handleSelectAll} className="list-control-button">全選</button>
             <button onClick={handleClearAll} className="list-control-button">全部清除</button>
@@ -135,8 +132,8 @@ function StationSelection({
       </div>
 
       <div className="panel-footer">
-        <button onClick={handleApply} className="apply-button">
-          套用並返回
+        <button onClick={handleApplyCustom} className="apply-button">
+          套用手動選擇
         </button>
       </div>
     </div>
