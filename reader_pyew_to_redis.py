@@ -167,7 +167,7 @@ def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
                     # Add to Redis Stream
                     msg_id = redis_client.xadd(stream_key, message_payload)
 
-                    stream_trim_seconds = 30
+                    stream_trim_seconds = 120
                     min_id_timestamp = int((time.time() - stream_trim_seconds) * 1000)
                     try:
                         # 使用原生命令確保傳入正確參數：XTRIM <key> MINID ~ <ms>-0

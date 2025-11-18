@@ -29,7 +29,7 @@ class ConnectionManager:
         await websocket.accept()
         self.active_connections.append(websocket)
         self.subscribed_stations[websocket] = set()
-        logger.info(f"📡 Client {websocket.client.host} connected")
+        logger.info(f"Client {websocket.client.host} connected")
         # 通知前端連線已建立，可以開始訂閱
         await websocket.send_json({"event": "connect_init"})
 
@@ -37,7 +37,7 @@ class ConnectionManager:
         self.active_connections.remove(websocket)
         if websocket in self.subscribed_stations:
             del self.subscribed_stations[websocket]
-        logger.info(f"🔌 Client {websocket.client.host} disconnected")
+        logger.info(f"Client {websocket.client.host} disconnected")
 
     def subscribe(self, websocket: WebSocket, stations: List[str]):
         """處理來自客戶端的測站訂閱請求"""
@@ -45,11 +45,11 @@ class ConnectionManager:
             # 前端傳來的可能是 'TWQ1' 或 'A024' 這種簡碼
             self.subscribed_stations[websocket] = set(stations)
             logger.info(
-                f"📡 Client {websocket.client.host} subscribed to {len(stations)} stations: {list(stations)[:5]}..."
+                f"Client {websocket.client.host} subscribed to {len(stations)} stations: {list(stations)[:5]}..."
             )
         else:
             self.subscribed_stations[websocket] = set()
-            logger.info(f"📡 Client {websocket.client.host} unsubscribed from all stations")
+            logger.info(f"Client {websocket.client.host} unsubscribed from all stations")
 
     async def send_wave_packet(self, wave_packet: dict):
         """將波形資料包傳送給已訂閱的客戶端"""
@@ -93,7 +93,6 @@ class ConnectionManager:
                 except Exception as e:
                     logger.error(f"Failed to send to {websocket.client.host}: {e}")
 
-
 socket_manager = ConnectionManager()
 
 # --- WebSocket 端點 ---
@@ -102,13 +101,14 @@ async def websocket_endpoint(websocket: WebSocket):
     await socket_manager.connect(websocket)
     try:
         while True:
-            # 等待客戶端訊息 (例如訂閱請求)
             data = await websocket.receive_json()
             event = data.get("event")
             payload = data.get("data")
+
             if event == "subscribe_stations":
                 stations = payload.get("stations", [])
                 socket_manager.subscribe(websocket, stations)
+
     except WebSocketDisconnect:
         socket_manager.disconnect(websocket)
     except Exception as e:
@@ -124,25 +124,23 @@ async def redis_wave_reader():
     logger.info("Starting Redis wave reader...")
     redis_client = redis.Redis(**REDIS_CONFIG, decode_responses=False)
     
-    # 獲取所有 wave stream 的鍵
     stream_keys_bytes = [key async for key in redis_client.scan_iter("wave:*:*")]
-    stream_keys = [key.decode('utf-8') for key in stream_keys_bytes]
-    if not stream_keys:
+    if not stream_keys_bytes:
         logger.warning("No 'wave:*' streams found in Redis. Waiting for streams to be created...")
-        # 如果啟動時沒有 stream，每 5 秒檢查一次
-        while not stream_keys:
-            await asyncio.sleep(5)
-            stream_keys = [key.decode('utf-8') for key in await redis_client.keys("wave:*:*")]
+        await asyncio.sleep(5)
+        # Retry once
+        stream_keys_bytes = [key async for key in redis_client.scan_iter("wave:*:*")]
 
-    logger.info(f"Found {len(stream_keys)} wave streams to listen to.")
+    if not stream_keys_bytes:
+        logger.error("Still no 'wave:*' streams found. Exiting reader task.")
+        return
+
+    logger.info(f"Found {len(stream_keys_bytes)} wave streams to listen to.")
     
-    # 為每個 stream 設置起始讀取位置為最新訊息
-    stream_ids = {key: '$' for key in stream_keys}
+    stream_ids = {key: '$' for key in stream_keys_bytes}
 
     while True:
         try:
-            # 使用 XREADGROUP 或 XREAD 來讀取多個 stream
-            # block=100 表示最多等待 100ms
             response = await redis_client.xread(stream_ids, count=10, block=100)
             
             if not response:
@@ -151,40 +149,27 @@ async def redis_wave_reader():
             wave_batch = {}
             
             for stream_key, messages in response:
-                # 更新下一次讀取的 ID
-                last_id = messages[-1][0].decode('utf-8')
-                stream_key_str = stream_key.decode('utf-8')
+                last_id = messages[-1][0]
                 stream_ids[stream_key] = last_id
 
-                # stream_key 格式: b'wave:EGFH:HLZ'
-                # reader_pyew_to_redis.py 寫入的 key 是 wave:{station}:{channel}
-                # 但前端需要完整的 SCNL，我們在這裡組合
-                # 注意：這是一個簡化，假設 network 和 location 是固定的
+                stream_key_str = stream_key.decode('utf-8')
                 _, station, channel = stream_key_str.split(":")
 
                 for msg_id, msg_data in messages:
-                    # reader_pyew_to_redis.py 將 numpy array 存為 bytes
-                    # 我們需要讀取並轉換回來
                     waveform_bytes = msg_data.get(b'data')
                     if not waveform_bytes:
                         continue
                     
-                    # 1. 從 bytes 轉回 numpy array
-                    # reader_pyew_to_redis.py 寫入的是原始 int32 資料
                     waveform_raw = np.frombuffer(waveform_bytes, dtype=np.int32)
                     
-                    # 2. 取得儀器校正值並轉換單位
                     wave_meta = {'station': station, 'channel': channel, 'network': msg_data.get(b'network', b'TW').decode('utf-8')}
-                    wave_meta = convert_to_tsmip_legacy_naming(wave_meta) # 處理命名轉換
+                    wave_meta = convert_to_tsmip_legacy_naming(wave_meta)
                     constant = get_wave_constant(wave_meta)
                     waveform_processed = waveform_raw * constant
-
-                    # 3. 進行訊號處理
                     waveform_processed = signal_processing(waveform_processed)
                     if waveform_processed is None:
                         continue
 
-                    # 4. 組合前端需要的 SCNL 格式 ID
                     network = msg_data.get(b'network', b'SM').decode('utf-8')
                     location = msg_data.get(b'location', b'01').decode('utf-8')
                     wave_id = f"{network}.{station}.{location}.{channel}"
@@ -210,7 +195,6 @@ async def redis_wave_reader():
 
         except Exception as e:
             logger.error(f"Error in redis_wave_reader: {e}")
-            # 發生錯誤時等待一下，避免快速循環
             await asyncio.sleep(0.1)
 
 
