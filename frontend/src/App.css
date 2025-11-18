@@ -124,6 +124,7 @@
   display: flex;
   flex-direction: column;
   min-height: 300px;
+  position: relative;
 }
 
 .section-header {
@@ -156,10 +157,14 @@
   background: var(--color-primary-dark);
 }
 
-.map-section > div:not(.section-header) {
-  flex: 1;
-  min-height: 0;
-  position: relative;
+.map-container {
+  position: absolute;
+  top: 50px;
+  left: var(--spacing-sm);
+  right: var(--spacing-sm);
+  bottom: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 .realtime-waveform {

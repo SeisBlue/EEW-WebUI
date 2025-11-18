@@ -62,16 +62,18 @@ function TaiwanMap({ stations, stationIntensities }) {
   }, [stations, stationIntensities]);
 
   return (
-    <DeckGL
-      initialViewState={INITIAL_VIEW_STATE}
-      controller={true}
-      layers={layers}
-    >
-      <Map 
-        reuseMaps 
-        mapStyle={MAP_STYLE}
-      />
-    </DeckGL>
+    <div className="map-container">
+      <DeckGL
+        initialViewState={INITIAL_VIEW_STATE}
+        controller={true}
+        layers={layers}
+      >
+        <Map 
+          reuseMaps 
+          mapStyle={MAP_STYLE}
+        />
+      </DeckGL>
+    </div>
   );
 }
 
