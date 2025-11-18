@@ -110,26 +110,6 @@ def parse_text_message(b):
         return ("binary", f"len={len(b)} hex-prefix={b[:64].hex()}...")
 
 
-def loading_animation(res, msg_id):
-    sys.stdout.write("\r" + " " * 88 + "\r")
-    sys.stdout.flush()
-    wave_endt = res["endt"]
-    station = res["station"]
-    channel = res["channel"]
-
-    wave_timestring = datetime.fromtimestamp(float(wave_endt)).strftime(
-        "%Y-%m-%d %H:%M:%S.%f"
-    )
-
-    delay = time.time() - wave_endt
-    stream_key = f"wave:{station}:{channel}"
-
-    # 顯示目前的 loading 字符
-    sys.stdout.write(
-        f"Redis xadd {stream_key} {msg_id.decode()} {wave_timestring[:-3]}  lag:{delay:.3f}s "
-    )
-    sys.stdout.flush()
-
 def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
     """
     Worker that uses EWModule to add a ring and call get_wave (which does the Trace parsing).
@@ -176,8 +156,6 @@ def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
                     except Exception as e:
                         print(f"[wave worker] {rname}={ringid} xtrim failed: {e}",
                               file=sys.stderr)
-
-                    loading_animation(res, msg_id)
             else:
                 time.sleep(poll_delay)
     except KeyboardInterrupt:
@@ -325,7 +303,7 @@ if __name__ == "__main__":
         description="Multi-category PyEW ring reader (print-only).")
     parser.add_argument("--env", "-e", nargs="+",
                         help="Which profiles to run (from earthworm_param).")
-    parser.add_argument("--delay", "-d", type=float, default=0.01,
+    parser.add_argument("--delay", "-d", type=float, default=0.001,
                         help="Poll delay when no message (s).")
     args = parser.parse_args()
 
