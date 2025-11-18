@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import PropTypes from 'prop-types'
+import Papa from 'papaparse'
 import DeckGL from '@deck.gl/react'
 import { OrthographicView } from '@deck.gl/core'
 import { PathLayer, TextLayer } from '@deck.gl/layers'
@@ -532,20 +533,30 @@ function RealtimeWaveformDeck({ wavePackets, socket, onReplacementUpdate, onStat
   })
 
   // 建立測站快速查找 Map
-  useEffect(() => {
-    fetch('/api/all-stations')
-      .then(response => response.json())
-      .then(stations => {
-        const map = {}
-        stations.forEach(station => {
-          map[station.station] = station
-        })
-        setStationMap(map)
-        console.log('📍 [Deck] stationMap updated:', Object.keys(map).length, 'stations')
-      })
-      .catch(err => {
-        console.error('❌ Failed to load all stations:', err)
-      })
+  useEffect(() => {    
+    // 改為讀取本地的 site_info.csv
+    Papa.parse('/site_info.csv', {
+      download: true,
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const stationData = results.data;
+        const stationMap = {};
+        stationData.forEach(s => {
+          // 確保 station code 存在且不重複，以最後出現的為準
+          if (s.Station) {
+            stationMap[s.Station] = {
+              station: s.Station,
+              latitude: parseFloat(s.Latitude),
+              longitude: parseFloat(s.Longitude),
+            };
+          }
+        });
+        setStationMap(stationMap);
+        console.log('📍 [Deck] stationMap updated:', Object.keys(stationMap).length, 'stations from site_info.csv');
+      },
+      error: (err) => console.error('❌ Failed to load site_info.csv:', err)
+    });
   }, [])
 
   // 當啟用自動替換時，為每個 CWASN 測站查找最近的 TSMIP 測站
@@ -866,27 +877,26 @@ function RealtimeWaveformDeck({ wavePackets, socket, onReplacementUpdate, onStat
 
   // 自動訂閱當前顯示的測站
   useEffect(() => {
-    if (!socket) return
+    // 確保 socket 存在且處於開啟狀態
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
 
-    const handleConnect = () => {
-      socket.emit('subscribe_stations', {
-        stations: displayStations
-      })
+    const subscribe = () => {
+      const payload = {
+        event: 'subscribe_stations',
+        data: {
+          stations: displayStations
+        }
+      };
+      socket.send(JSON.stringify(payload));
       console.log('📡 Subscribed to', displayStations.length, 'stations:', displayStations.slice(0, 10), '...')
     }
 
-    socket.on('connect', handleConnect)
-
-    // 如果已經連接，立即訂閱
-    if (socket.connected) {
-      handleConnect()
-    }
+    subscribe();
 
     // 清理函數：組件卸載時取消訂閱和事件監聽
     return () => {
-      socket.off('connect', handleConnect)
-      if (socket.connected) {
-        socket.emit('subscribe_stations', { stations: [] })
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ event: 'subscribe_stations', data: { stations: [] } }));
         console.log('📡 Unsubscribed from all stations')
       }
     }

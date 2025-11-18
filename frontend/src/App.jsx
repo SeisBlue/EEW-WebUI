@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import io from 'socket.io-client'
+// import io from 'socket.io-client' // 移除 socket.io-client
 import './App.css'
 import ReportDetail from './components/ReportDetail'
+import Papa from 'papaparse'
 import TaiwanMap from './components/TaiwanMapDeck'
 import RealtimeWaveform from './components/RealtimeWaveformDeck'
 import { getIntensityValue } from './utils'
@@ -100,68 +101,89 @@ function App() {
   const [selectedItem, setSelectedItem] = useState(null)
 
   useEffect(() => {
-    fetch('/api/stations')
-      .then(res => res.json())
-      .then(stations => {
-        const stationsWithStatus = stations.map(s => ({
-          ...s,
+    // 改為讀取本地的 eew_target.csv
+    Papa.parse('/eew_target.csv', {
+      download: true,
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const stations = results.data.map(s => ({
+          network: s.network,
+          county: s.county,
+          station: s.station,
+          station_zh: s.station_zh,
+          longitude: parseFloat(s.longitude),
+          latitude: parseFloat(s.latitude),
+          elevation: parseFloat(s.elevation),
+          // 添加前端需要的額外狀態
           status: 'unknown',
           lastSeen: null,
-          pga: null
-        }))
-        setTargetStations(stationsWithStatus)
+          pga: null,
+        }));
+        setTargetStations(stations);
         setStationToCountyMap(new Map(stations.map(s => [s.station, s.county])));
-        console.log('📍 Loaded', stationsWithStatus.length, 'target stations')
-      })
-      .catch(err => console.error('載入測站資料失敗:', err))
+        console.log('📍 Loaded', stations.length, 'target stations from eew_target.csv');
+      },
+      error: (err) => {
+        console.error('載入 eew_target.csv 失敗:', err);
+      }});
 
-    const socket = io('/', {
-      transports: ['websocket', 'polling']
-    })
-    setSocket(socket)
+    // --- WebSocket 連線邏輯 ---
+    // 根據環境決定 WebSocket URL
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+    console.log(`🔌 Attempting to connect to WebSocket at ${wsUrl}`);
 
-    const handleConnect = () => {
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
       console.log('✅ Connected to Server')
       setIsConnected(true)
-    }
-    const handleDisconnect = () => {
+      setSocket(ws); // 將 WebSocket 實例存入 state
+    };
+
+    ws.onclose = () => {
       console.log('❌ Disconnected from Server')
       setIsConnected(false)
-    }
-    const handleConnectInit = () => {
-      console.log('🔌 Connection initialized')
-      loadHistoricalReports(20)
-    }
-    const handleWavePacket = (data) => {
-      console.log('🌊 Wave packet received:', data.waveid)
-      const timestamp = new Date().toLocaleString('zh-TW')
-      setLatestWaveTime(timestamp)
-      setWavePackets(prev => [data, ...prev].slice(0, 10))
-    }
-    const handleReportData = (data) => {
-      console.log('📊 Report data received:', data)
-      const timestamp = new Date().toLocaleString('zh-TW')
-      setReports(prev => [{
-        id: Date.now(),
-        timestamp,
-        data,
-        isRealtime: true
-      }, ...prev].slice(0, 20))
-    }
+      setSocket(null);
+    };
 
-    socket.on('connect', handleConnect)
-    socket.on('disconnect', handleDisconnect)
-    socket.on('connect_init', handleConnectInit)
-    socket.on('wave_packet', handleWavePacket)
-    socket.on('report_data', handleReportData)
+    ws.onerror = (error) => {
+      console.error('❌ WebSocket Error:', error);
+    };
+
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      const { event: eventType, data } = message;
+
+      switch (eventType) {
+        case 'connect_init':
+          console.log('🔌 Connection initialized by server');
+          loadHistoricalReports(20);
+          break;
+        case 'wave_packet':
+          console.log('🌊 Wave packet received:', data.waveid);
+          setLatestWaveTime(new Date().toLocaleString('zh-TW'));
+          setWavePackets(prev => [data, ...prev].slice(0, 10));
+          break;
+        case 'report_data': // 雖然新後端沒有，但保留以備不時之需
+          console.log('📊 Report data received:', data);
+          setReports(prev => [{
+            id: Date.now(),
+            timestamp: new Date().toLocaleString('zh-TW'),
+            data,
+            isRealtime: true
+          }, ...prev].slice(0, 20));
+          break;
+        default:
+          console.warn('Unknown event type received:', eventType);
+      }
+    };
 
     return () => {
-      socket.off('connect', handleConnect)
-      socket.off('disconnect', handleDisconnect)
-      socket.off('connect_init', handleConnectInit)
-      socket.off('wave_packet', handleWavePacket)
-      socket.off('report_data', handleReportData)
-      socket.disconnect()
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
     }
   }, [])
 
