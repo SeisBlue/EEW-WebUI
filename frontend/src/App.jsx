@@ -4,6 +4,9 @@ import Papa from 'papaparse';
 import TaiwanMap from './components/TaiwanMapDeck';
 import RealtimeWaveformDeck from './components/RealtimeWaveformDeck';
 import StationSelection from './components/StationSelection.jsx';
+import { getIntensityColor, pgaToIntensity, extractStationCode } from './utils';
+
+const TIME_WINDOW = 30; // Seconds
 
 // 所有測站列表 - 按緯度排列顯示
 const EEW_TARGETS = [
@@ -28,12 +31,12 @@ function App() {
   const [socket, setSocket] = useState(null);
   const [wavePackets, setWavePackets] = useState([]);
   const [latestWaveTime, setLatestWaveTime] = useState(null);
+  const [waveDataMap, setWaveDataMap] = useState({});
 
   // Station and map state
   const [allTargetStations, setAllTargetStations] = useState([]); // All stations from eew_target.csv
   const [stationIntensities, setStationIntensities] = useState({});
   const [stationMap, setStationMap] = useState({});
-  const [waveDataMapForStressTest, setWaveDataMapForStressTest] = useState({});
 
   // Load initial station metadata
   useEffect(() => {
@@ -85,20 +88,156 @@ function App() {
       if (message.event === 'wave_packet') {
         setLatestWaveTime(new Date().toLocaleString('zh-TW'));
         setWavePackets(prev => [message.data, ...prev].slice(0, 10));
-        if (selectionMode === 'all') {
-          setWaveDataMapForStressTest(prev => ({ ...prev, ...message.data.data }));
-        }
       }
     };
 
     return () => { if (ws.readyState === WebSocket.OPEN) ws.close(); };
-  }, [selectionMode]);
+  }, []);
+
+  // Process new wave packets
+  useEffect(() => {
+    if (wavePackets.length === 0) return;
+
+    const latestPacket = wavePackets[0];
+
+    setWaveDataMap(prev => {
+      const updated = { ...prev };
+      const now = Date.now();
+
+      if (latestPacket.data) {
+        Object.keys(latestPacket.data).forEach(seedStation => {
+          const stationCode = extractStationCode(seedStation);
+          const wavePacketData = latestPacket.data[seedStation];
+          const { pga = 0, startt, endt, samprate = 100, waveform = [] } = wavePacketData;
+
+          const prevStationData = updated[stationCode] || {
+            dataPoints: [], pgaHistory: [], lastPga: 0, lastEndTime: null,
+            recentStats: {
+              points: [], totalSumSquares: 0, totalMaxAbs: 0, totalCount: 0
+            }
+          };
+          const stationData = {
+            ...prevStationData,
+            dataPoints: [...prevStationData.dataPoints],
+            pgaHistory: [...prevStationData.pgaHistory],
+            recentStats: {
+              ...prevStationData.recentStats,
+              points: [...prevStationData.recentStats.points]
+            }
+          };
+          updated[stationCode] = stationData;
+
+          const packetStartTime = startt ? startt * 1000 : now;
+          const packetEndTime = endt ? endt * 1000 : now;
+
+          let hasGap = false;
+          if (stationData.lastEndTime !== null && startt) {
+            const timeDiff = Math.abs(startt - stationData.lastEndTime);
+            const expectedInterval = 1.0 / samprate;
+            if (timeDiff > expectedInterval * 2) {
+              hasGap = true;
+            }
+          }
+
+          if (hasGap && stationData.dataPoints.length > 0) {
+            stationData.dataPoints.push({
+              timestamp: stationData.lastEndTime * 1000,
+              endTimestamp: packetStartTime,
+              values: [],
+              isGap: true
+            });
+          }
+
+          stationData.dataPoints.push({
+            timestamp: packetStartTime,
+            endTimestamp: packetEndTime,
+            values: waveform,
+            samprate: samprate,
+            isGap: false
+          });
+
+          if (endt) {
+            stationData.lastEndTime = endt;
+          }
+
+          stationData.pgaHistory.push({ timestamp: now, pga: pga });
+          stationData.lastPga = pga;
+
+          if (waveform.length > 0) {
+            let sumSquares = 0;
+            let maxAbs = 0;
+            for (const value of waveform) {
+              sumSquares += value * value;
+              maxAbs = Math.max(maxAbs, Math.abs(value));
+            }
+            stationData.recentStats.points.push({
+              timestamp: packetEndTime,
+              sumSquares,
+              maxAbs,
+              count: waveform.length
+            });
+            stationData.recentStats.totalSumSquares += sumSquares;
+            stationData.recentStats.totalMaxAbs = Math.max(stationData.recentStats.totalMaxAbs, maxAbs);
+            stationData.recentStats.totalCount += waveform.length;
+          }
+        });
+      }
+
+      const newStationIntensities = { ...stationIntensities };
+      const cutoffTime = now - TIME_WINDOW * 1000;
+      const recentCutoff = now - 10 * 1000;
+
+      Object.keys(updated).forEach(stationCode => {
+        const stationData = updated[stationCode];
+
+        stationData.dataPoints = stationData.dataPoints.filter(
+          point => point.endTimestamp >= cutoffTime
+        );
+        stationData.pgaHistory = stationData.pgaHistory.filter(
+          item => item.timestamp >= cutoffTime
+        );
+
+        const stats = stationData.recentStats;
+        let statsChanged = false;
+        while (stats.points.length > 0 && stats.points[0].timestamp < recentCutoff) {
+          const removedPoint = stats.points.shift();
+          stats.totalSumSquares -= removedPoint.sumSquares;
+          stats.totalCount -= removedPoint.count;
+          statsChanged = true;
+        }
+
+        if (statsChanged) {
+          stats.totalMaxAbs = stats.points.reduce((max, p) => Math.max(max, p.maxAbs), 0);
+        }
+
+        if (stats.totalCount > 0) {
+          const rms = Math.sqrt(stats.totalSumSquares / stats.totalCount);
+          stationData.displayScale = Math.max(rms * 4, stats.totalMaxAbs * 0.3, 0.05);
+        } else if (stationData.dataPoints.length === 0) {
+          stationData.displayScale = 1.0;
+        }
+
+        const maxPga30s = stationData.pgaHistory.reduce((max, item) => Math.max(max, item.pga), 0);
+        const intensity = pgaToIntensity(maxPga30s);
+        const color = getIntensityColor(intensity);
+
+        newStationIntensities[stationCode] = {
+          pga: maxPga30s,
+          intensity: intensity,
+          color: color
+        };
+      });
+
+      setStationIntensities(newStationIntensities);
+      return updated;
+    });
+  }, [wavePackets]);
 
   // Calculate the list of stations to display in the waveform panel
   const displayStations = useMemo(() => {
     switch (selectionMode) {
       case 'all':
-        const received = Object.keys(waveDataMapForStressTest).map(s => s.split('.')[1]).filter(Boolean);
+        const received = Object.keys(waveDataMap).map(s => s.split('.')[1]).filter(Boolean);
         return [...new Set(received)].sort((a, b) => (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0));
       case 'custom':
         return customStations;
@@ -106,17 +245,35 @@ function App() {
       default:
         return EEW_TARGETS;
     }
-  }, [selectionMode, waveDataMapForStressTest, customStations, stationMap]);
+  }, [selectionMode, waveDataMap, customStations, stationMap]);
 
   // Calculate the list of stations to display on the map
   const mapDisplayStations = useMemo(() => {
-    const stationSet = new Set(displayStations);
-    if (selectionMode === 'default') {
-        const targetSet = new Set(EEW_TARGETS);
-        return allTargetStations.filter(s => targetSet.has(s.station));
-    }
-    return allTargetStations.filter(s => stationSet.has(s.station));
-  }, [displayStations, selectionMode, allTargetStations]);
+    const targetStationsMap = new Map(allTargetStations.map(s => [s.station, s]));
+
+    return displayStations
+      .map(stationCode => {
+        if (targetStationsMap.has(stationCode)) {
+          return targetStationsMap.get(stationCode);
+        }
+        if (stationMap[stationCode]) {
+          return {
+            station: stationCode,
+            longitude: stationMap[stationCode].longitude,
+            latitude: stationMap[stationCode].latitude,
+            network: '',
+            county: '',
+            station_zh: stationCode,
+            elevation: 0,
+            status: 'unknown',
+            lastSeen: null,
+            pga: null,
+          };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }, [displayStations, allTargetStations, stationMap]);
 
 
   // Subscribe to WebSocket station data
@@ -138,12 +295,9 @@ function App() {
     if (mode === 'custom') {
       setCustomStations(selectedStations);
     }
-    // Reset data when selection changes to avoid showing stale waveforms
     setWavePackets([]);
     setStationIntensities({});
-    if (mode !== 'all') {
-      setWaveDataMapForStressTest({});
-    }
+    setWaveDataMap({});
   };
 
   const waveformTitle = useMemo(() => {
@@ -195,8 +349,7 @@ function App() {
         <div className="right-panel">
           {view === 'waveform' ? (
             <RealtimeWaveformDeck
-              wavePackets={wavePackets}
-              onStationIntensityUpdate={setStationIntensities}
+              waveDataMap={waveDataMap}
               displayStations={displayStations}
               stationMap={stationMap}
               title={waveformTitle}

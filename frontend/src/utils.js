@@ -36,7 +36,7 @@ export function getIntensityColor(intensity) {
 }
 
 /**
- * 檢查測站是否為 TSMIP 格式 (Axxx, Bxxx, Cxxx)
+ * 檢查測站是否為 TSMIP 格式
  * @param {string} stationCode
  */
 export function isTSMIPStation(stationCode) {

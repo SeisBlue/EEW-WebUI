@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { Map } from 'react-map-gl/maplibre';
@@ -16,15 +16,17 @@ const INITIAL_VIEW_STATE = {
 };
 
 function TaiwanMap({ stations, stationIntensities }) {
+  const [hoverInfo, setHoverInfo] = useState(null);
+
   const layers = useMemo(() => {
     if (!stations || stations.length === 0) {
       return [];
     }
 
-    // 測站點位層
     const stationPoints = new ScatterplotLayer({
       id: 'station-points',
       data: stations,
+      pickable: true,
       getPosition: d => [d.longitude, d.latitude],
       getFillColor: d => {
         const intensityData = stationIntensities[d.station];
@@ -46,20 +48,26 @@ function TaiwanMap({ stations, stationIntensities }) {
       }
     });
 
-    // 測站名稱標籤層
-    const stationLabels = new TextLayer({
+    const stationLabels = hoverInfo?.object ? new TextLayer({
       id: 'station-labels',
-      data: stations,
+      data: [hoverInfo.object],
       getPosition: d => [d.longitude, d.latitude],
       getText: d => d.station,
-      getSize: 12,
-      getColor: [255, 255, 255, 200],
-      getPixelOffset: [0, 15],
+      getSize: 14,
+      getColor: [255, 255, 255, 255],
+      getPixelOffset: [0, 18],
       fontFamily: 'monospace',
-    });
+      fontWeight: 'bold',
+      outlineWidth: 4,
+      outlineColor: [0, 0, 0, 150]
+    }) : null;
 
     return [stationPoints, stationLabels];
-  }, [stations, stationIntensities]);
+  }, [stations, stationIntensities, hoverInfo]);
+
+  const handleHover = ({ object, x, y }) => {
+    setHoverInfo({ object, x, y });
+  };
 
   return (
     <div className="map-container">
@@ -67,6 +75,7 @@ function TaiwanMap({ stations, stationIntensities }) {
         initialViewState={INITIAL_VIEW_STATE}
         controller={true}
         layers={layers}
+        onHover={handleHover}
       >
         <Map 
           reuseMaps 
