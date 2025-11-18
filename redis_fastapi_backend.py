@@ -138,7 +138,6 @@ async def redis_wave_reader():
     
     # 為每個 stream 設置起始讀取位置為最新訊息
     stream_ids = {key: '$' for key in stream_keys}
-    batch_interval = 0.1  # 每 0.1 秒處理一次批次
 
     while True:
         try:
@@ -212,7 +211,7 @@ async def redis_wave_reader():
         except Exception as e:
             logger.error(f"Error in redis_wave_reader: {e}")
             # 發生錯誤時等待一下，避免快速循環
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.1)
 
 
 # Load site info
