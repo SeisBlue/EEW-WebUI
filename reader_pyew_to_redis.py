@@ -1,202 +1,287 @@
 #!/usr/bin/env python3
 """
-Reader bridge: PyEW -> Redis Streams (async).
+Example: read wave / pick / eew messages from Earthworm rings using PyEW,
+print metadata / message contents (no Redis). Does NOT modify PyEW.
 
 Behavior:
-- attach PyEW.EWModule
-- round-robin copymsg_type / get_wave to obtain raw bytes (prefer copymsg_type if available)
-- push minimal (meta, payload) into an asyncio.Queue (bounded)
-- background coroutine consumes the queue and writes to Redis Stream using xadd,
-  with optional batching/pipelining.
+- Uses EWModule.get_wave(...) for wave messages (message type 19).
+- Uses transport.copymsg_type(msg_type) for other message categories (pick, eew).
+- Runs one subprocess per (ring, category) to avoid GIL limits and allow parallel reads.
+- Prints parsed metadata or decoded text for each received message.
+
+Usage:
+  - Edit `earthworm_param` and `MSG_TYPE_MAP` below to match your environment.
+  - Run: python3 example_multi_reader.py
+  - Ctrl-C to stop.
 
 Notes:
-- Requires PyEW importable in this Python environment.
-- Redis must be reachable (same host recommended).
+- You MUST supply correct Earthworm message type integers for non-wave categories
+  in MSG_TYPE_MAP (pick/eew). Wave messages are typically type 19 and are handled
+  by EWModule.get_wave to reuse PyEW's parsing.
+- If you don't know the message type for a category, put None in MSG_TYPE_MAP;
+  the worker will still fetch raw bytes but will attempt to decode as text.
 """
-import os
-import asyncio
-import json
-import sys
 import time
-import logging
-from typing import Tuple
+import argparse
+import multiprocessing as mp
+import struct
+from pprint import pprint
 
-import numpy as np
-import redis.asyncio as aioredis
-from redis.asyncio.retry import Retry
-from redis.backoff import ExponentialBackoff
-from redis.exceptions import ConnectionError as RedisConnectionError
+"""
+ Ring   WAVE_RING_CWASN  1000    # public waveform data
+ Ring   PICK_RING        1005    # public parametric data
+ Ring   HYPO_RING        1015    # public hypocenters etc.
+ Ring   BINDER_RING      1020    # private buffer for binder_ew
+ Ring   EQALARM_EW_RING  1025    # private buffer for eqalam_ew
+ Ring   WAVE_RING_TSMIP  1030    # DST drink messages
+ Ring   EEW_RING         1035    # A/D waveform ring
+ Ring   CUBIC_RING       1036    # private buffer for cubic_msg
+ Ring   STATUS_RING      1040    # Ring for status messages
+"""
 
-try:
-    import PyEW
-except Exception as e:
-    raise RuntimeError("PyEW import failed; ensure PyEW is installed and Earthworm headers available") from e
+# ---- Configuration: edit for your environment ----
+earthworm_param = {
+    "test": {
+        "inst_id": 255,
+        "wave": {
+            "WAVE_RING_CWASN": 1000,
+            "WAVE_RING_TSMIP": 1030
+        },
+        "pick": {"PICK_RING": 1005},
+        "eew": {
+            "EEW_RING": 1035,
+        },
+    },
+    "jimmy": {
+        "inst_id": 255,
+        "wave": {"WAVE_RING_TSMIP": 1034},
+        "pick": {"PICK_RING": 1005},
+        "eew": {},
+    },
+    "cwa": {
+        "inst_id": 52,
+        "wave": {"WAVE_RING_TSMIP": 1034},
+        "pick": {"PICK_RING": 1005},
+        "eew": {},
+    },
+}
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379")
-STREAM_KEY = os.getenv("STREAM_KEY", "waves")
-QUEUE_MAXSIZE = int(os.getenv("QUEUE_MAXSIZE", "10000000"))
-BATCH_MAX = int(os.getenv("BATCH_MAX", "1000"))
-BATCH_TIMEOUT = float(os.getenv("BATCH_TIMEOUT", "0.05"))
-EW_DEF_RING = int(os.getenv("EW_DEF_RING", "1000"))
-EW_MOD = int(os.getenv("EW_MOD", "2"))
-EW_INST = int(os.getenv("EW_INST", "255"))
-EW_RINGS = os.getenv("EW_RINGS", "1000, 1034")  # e.g. "1034,1000"
+# Map logical category -> Earthworm message type integer.
+# Replace values for 'pick' and 'eew' with the correct message type numbers used in your
+# Earthworm config. If unknown, set to None to try text decoding.
+# <-- put the actual integer type for pick messages, or leave None for text attempt
+MSG_TYPE_MAP = {
+    "wave": 19,  # standard TRACEBUF/TRACE2
+    "pick": 150,
+    "eew": 0,
 
-LOGLEVEL = os.getenv("LOGLEVEL", "INFO")
-logging.basicConfig(level=LOGLEVEL)
-logger = logging.getLogger("reader_pyew_redis")
+}
+# -------------------------------------------------
 
-# Helper
-def parse_ring_list(s: str):
-    return [int(p) for p in s.split(",") if p.strip()] if s else []
+# Import PyEW classes (must be installed/importable)
+from PyEW import EWModule, transport
 
-RING_IDS = parse_ring_list(EW_RINGS)
 
-# Map trace datatype to numpy dtype
-DTYPE_MAP = {"i2": np.int16, "s2": np.int16, "i4": np.int32, "s4": np.int32,
-             "f4": np.float32, "f8": np.float64, "t4": np.float32, "t8": np.float64}
-
-async def redis_writer(queue: asyncio.Queue):
-    # Configure Redis client with connection retries using exponential backoff
-    retry = Retry(ExponentialBackoff(cap=5, full_jitter=True), 5)
-    r = aioredis.from_url(
-        REDIS_URL,
-        retry_on_error=[RedisConnectionError, asyncio.TimeoutError],
-        retry=retry,
-    )
-    batch = []
-    last_flush = time.time()
-    while True:
+def pretty_print_wave(result):
+    """Print metadata + short data summary from EWModule.get_wave() result dict."""
+    meta_keys = ['station', 'network', 'channel', 'location',
+                 'nsamp', 'samprate', 'startt', 'endt', 'datatype']
+    meta = {k: result.get(k) for k in meta_keys}
+    print("=" * 78)
+    print("WAVE message received:")
+    pprint(meta)
+    data = result.get('data', None)
+    if data is not None:
         try:
-            item = None
-            try:
-                item = await asyncio.wait_for(queue.get(), timeout=BATCH_TIMEOUT)
-            except asyncio.TimeoutError:
-                pass
-
-            if item:
-                batch.append(item)
-
-            # flush if batch too big or timeout
-            if batch and (len(batch) >= BATCH_MAX or (time.time() - last_flush) >= BATCH_TIMEOUT):
-                # Use pipeline to send multiple xadd in one round-trip
-                async with r.pipeline() as pipe:
-                    for meta, payload in batch:
-                        # fields: meta (json bytes), payload (raw bytes)
-                        pipe.xadd(STREAM_KEY, {"meta": json.dumps(meta).encode("utf-8"), "payload": payload})
-                    await pipe.execute()
-                logger.debug("Flushed %d messages to Redis", len(batch))
-                batch.clear()
-                last_flush = time.time()
-        except RedisConnectionError as e:
-            logger.error("Redis connection failed after retries: %s. Waiting before next attempt.", e)
-            await asyncio.sleep(5)
+            print("data dtype:", data.dtype, "length:", data.size)
+            nprint = min(10, data.size)
+            print("first {} samples: {}".format(nprint, data[:nprint].tolist()))
         except Exception as e:
-            logger.exception("redis_writer error: %s", e)
-            # backoff on other errors
-            await asyncio.sleep(0.5)
+            print("data: could not inspect numpy array:", e)
+    print("=" * 78)
 
-async def main():
-    ew = PyEW.EWModule(EW_DEF_RING, EW_MOD, EW_INST, hb_time=30, db=False)
-    # add rings listed in EW_RINGS
-    for rid in RING_IDS:
-        ew.add_ring(rid)
 
-    # build asyncio queue
-    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
-    # start redis writer
-    writer_task = asyncio.create_task(redis_writer(queue))
+def parse_text_message(b):
+    """Try to decode a text message, fallback to hex summary."""
+    try:
+        text = b.decode('utf-8')
+        # Trim to reasonable length for printing
+        if len(text) > 1000:
+            text = text[:1000] + '... (truncated)'
+        return ("text", text)
+    except Exception:
+        # Not valid UTF-8; show length and hex snippet
+        return ("binary", f"len={len(b)} hex-prefix={b[:64].hex()}...")
 
-    # choose method: prefer copymsg_type if available (gives status, rlen, realmsg)
-    # fallback to get_wave wrapper if your PyEW exposes it.
-    ring_idx = 0
-    num_rings = len(ew.ringcom) if hasattr(ew, "ringcom") else 0
-    logger.info("Starting read loop, rings=%d", num_rings)
 
+def worker_wave(rname, ringid, modid, instid, poll_delay):
+    """
+    Worker that uses EWModule to add a ring and call get_wave (which does the Trace parsing).
+    We create a short-lived EWModule for each worker and call add_ring + get_wave.
+    """
+    print(f"[wave worker] {rname}={ringid} starting")
+    # hb_time arbitrary (heartbeat thread will run); debug False
+    module = EWModule(def_ring=1000, mod_id=modid, inst_id=instid, hb_time=15, db=False)
+    module.add_ring(ringid)
+    buf_index = len(module.ringcom) - 1
     try:
         while True:
-            try:
-                if num_rings > 0:
-                    # use copymsg_type if PyEW exposes ringcom objects and copymsg_type
-                    try:
-                        msg = ew.ringcom[ring_idx].copymsg_type(19)  # 19 = trace
-                    except Exception:
-                        # fallback to ew.get_wave(buf_ring)
-                        msg = ew.get_wave(ring_idx)
-                    ring_idx = (ring_idx + 1) % max(1, num_rings)
-                else:
-                    msg = ew.get_wave(0)
-
-                if not msg or msg == (0, 0):
-                    await asyncio.sleep(0.001)
-                    continue
-
-                # normalize msg types from different PyEW wrappers:
-                # case A: (status, rlen, realmsg)
-                # case B: (rlen, realmsg)
-                # case C: dict from get_wave
-                meta = {}
-                payload_bytes = b""
-                status = None
-
-                if isinstance(msg, tuple):
-                    if len(msg) == 3:
-                        status, rlen, realmsg = msg
-                        payload_bytes = bytes(realmsg[:rlen])
-                    elif len(msg) == 2:
-                        rlen, realmsg = msg
-                        payload_bytes = bytes(realmsg[:rlen])
-                elif isinstance(msg, dict):
-                    # expected keys: 'data', 'datatype', 'nsamp', 'startt', 'endt', 'station', ...
-                    dtype = msg.get("datatype", "i2")
-                    npdtype = DTYPE_MAP.get(dtype, np.int16)
-                    data = msg.get("data")
-                    # ensure numpy array
-                    if isinstance(data, np.ndarray):
-                        arr = data.astype(npdtype, copy=False)
-                    else:
-                        arr = np.array(data, dtype=npdtype, copy=True)
-                    payload_bytes = arr.tobytes()
-                    meta = {
-                        "network": msg.get("network", ""),
-                        "station": msg.get("station", ""),
-                        "location": msg.get("location", ""),
-                        "channel": msg.get("channel", ""),
-                        "datatype": dtype,
-                        "nsamp": int(msg.get("nsamp", arr.size)),
-                        "samprate": float(msg.get("samprate", 100.0)),
-                        "startt": float(msg.get("startt", 0.0)),
-                        "endt": float(msg.get("endt", 0.0)),
-                        "pub_time": time.time()
-                    }
-                else:
-                    # unknown format — try to be robust
-                    logger.debug("Unknown msg type from PyEW: %s", type(msg))
-                    continue
-
-                # If metadata empty, try to fill minimal meta
-                if not meta:
-                    meta = {"datatype": "i2", "nsamp": len(payload_bytes) // 2, "pub_time": time.time()}
-
-                print(meta, payload_bytes)
-                sys.stdout.flush()
-                # push into queue (non-blocking with drop policy to avoid blocking reader)
-                try:
-                    queue.put_nowait((meta, payload_bytes))
-                except asyncio.QueueFull:
-                    # drop policy: drop this message (or you could pop oldest and push)
-                    pass
-                    # logger.warning("Queue full, dropping message for station %s", meta.get("station", "N/A"))
-                    # increment a metric or alert as needed
-
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                logger.exception("reader loop error: %s", e)
-                await asyncio.sleep(0.01)
+            res = module.get_wave(buf_index)
+            if res:
+                # pretty_print_wave(res)
+                pass
+            else:
+                time.sleep(poll_delay)
+    except KeyboardInterrupt:
+        pass
     finally:
-        writer_task.cancel()
-        await asyncio.sleep(0.1)
+        # Attempt safe detach
+        try:
+            module.OK = False
+            module.default_ring.detach()
+        except Exception:
+            pass
+        for r in getattr(module, "ringcom", []):
+            try:
+                r.detach()
+            except Exception:
+                pass
+        print(f"[wave worker] {rname}={ringid} stopped")
+
+
+def worker_text_or_binary(rname, ringid, modid, instid, msg_type, poll_delay,
+                          category):
+    """
+    Worker for message categories other than wave. Uses transport.copymsg_type(msg_type)
+    if msg_type is provided. If msg_type is None, will attempt to call copymsg_type with
+    0..255 to try catching text messages, but normally you should provide the correct msg_type.
+    """
+    print(
+        f"[{category} worker] {rname}={ringid} msg_type={msg_type} starting")
+    t = transport(ringid, modid, instid)
+    t.flush()
+    try:
+        while True:
+            if msg_type is not None:
+                msg = t.copymsg_type(msg_type)
+            else:
+                # If no msg_type known, try a generic approach: try copying any msg (type=0 in req),
+                # then filter by instid if needed. Here we just call copymsg_type(0) to get something
+                # that the ring returns (this may not return the desired messages in some configs).
+                msg = t.copymsg_type(0)
+            if msg != (0, 0):
+                # msg is (status, rlen, realmsg) per PyEW.copymsg_type
+                status, rlen, realmsg = msg
+                if rlen <= 0:
+                    continue
+                payload = realmsg[:rlen]
+                kind, body = parse_text_message(payload)
+                print("-" * 78)
+                print(
+                    f"{category.upper()} message from {rname} {ringid} (status={status}, rlen={rlen}, kind={kind}):")
+                print(body)
+                print("-" * 78)
+            else:
+                time.sleep(poll_delay)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            t.detach()
+        except Exception:
+            pass
+        print(f"[{category} worker] {rname}={ringid} stopped")
+
+
+def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
+                              poll_delay=0.001):
+    """
+    Start processes for all rings defined in a profile. Returns list of Process objects.
+    profile_cfg is expected to have:
+      - inst_id
+      - wave: dict of {name: ringid}
+      - pick: dict of {name: ringid}
+      - eew: dict of {name: ringid}
+    """
+    procs = []
+    inst_id = profile_cfg.get("inst_id", 255)
+    mod_id = 135  # configurable fallback; adjust if you need a different mod id
+
+    # waves: for each ring defined, spawn worker_wave
+    for rname, ringid in profile_cfg.get("wave", {}).items():
+        p = mp.Process(target=worker_wave,
+                       args=(profile_name, ringid, mod_id, inst_id, poll_delay))
+        p.daemon = True
+        p.start()
+        procs.append(p)
+
+    # picks
+    for rname, ringid in profile_cfg.get("pick", {}).items():
+        p = mp.Process(target=worker_text_or_binary,
+                       args=(profile_name, ringid, mod_id, inst_id,
+                             msg_type_map.get("pick"), poll_delay, "pick"))
+        p.daemon = True
+        p.start()
+        procs.append(p)
+
+    # eew
+    for rname, ringid in profile_cfg.get("eew", {}).items():
+        p = mp.Process(target=worker_text_or_binary,
+                       args=(rname, ringid, mod_id, inst_id,
+                             msg_type_map.get("eew"), poll_delay, "eew"))
+        p.daemon = True
+        p.start()
+        procs.append(p)
+
+    return procs
+
+
+def main(profiles_to_run=None, poll_delay=0.001):
+    """
+    Launch workers for requested profiles (keys in earthworm_param).
+    If profiles_to_run is None, launch for all profiles in earthworm_param.
+    """
+    if profiles_to_run is None:
+        profiles_to_run = list(earthworm_param.keys())
+
+    all_procs = []
+    for prof in profiles_to_run:
+        cfg = earthworm_param.get(prof)
+        if not cfg:
+            print(f"No configuration for profile '{prof}', skipping.")
+            continue
+        procs = start_workers_for_profile(prof, cfg, MSG_TYPE_MAP,
+                                          poll_delay=poll_delay)
+        all_procs.extend(procs)
+
+    print("All workers started. Press Ctrl-C to stop.")
+    try:
+        while True:
+            alive = any(p.is_alive() for p in all_procs)
+            if not alive:
+                break
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Shutdown requested, terminating workers...")
+    finally:
+        for p in all_procs:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        for p in all_procs:
+            p.join(timeout=1)
+        print("All workers stopped.")
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(
+        description="Multi-category PyEW ring reader (print-only).")
+    parser.add_argument("--env", "-e", nargs="+",
+                        help="Which profiles to run (from earthworm_param).")
+    parser.add_argument("--delay", "-d", type=float, default=0.001,
+                        help="Poll delay when no message (s).")
+    args = parser.parse_args()
+
+    # If you want to only run certain profiles: python example_multi_reader.py -p test jimmy
+    main(profiles_to_run=args.env, poll_delay=args.delay)
