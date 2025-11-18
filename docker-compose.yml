@@ -11,7 +11,7 @@ services:
       - ./:/workspace
     ipc: host
     network_mode: host
-    command: bash -c "sleep 10 && /usr/local/bin/python /workspace/reader_pyew_to_redis.py -e test"
+    command: bash -c "sleep 10 && /usr/local/bin/python /workspace/reader_pyew_to_redis.py -e jimmy"
     restart: on-failure
     depends_on:
       - earthworm
@@ -35,23 +35,23 @@ services:
     network_mode: host
     working_dir: /workspace/frontend
     command: ["/usr/bin/pnpm", "run", "dev", "--host"]
-  #  earthworm:
-  #    image: seisblue/earthworm
-  #    container_name: earthworm
-  #    volumes:
-  #      - ./:/workspace
-  #      - ./params:/opt/earthworm/run/params
-  #      - ./wavefile:/opt/earthworm/wavefile:ro
-  #    ipc: host
-  #    network_mode: host
-  #    command: bash -c "source /opt/earthworm/run/params/ew_linux.bash && startstop"
-  #    stdin_open: true
-  #    tty: true
   earthworm:
-    image: cwadayi/earthworm_ubuntu22.04_eew:v1
+    image: seisblue/earthworm
     container_name: earthworm
+    volumes:
+      - ./:/workspace
+      - ./params:/opt/earthworm/run/params
+      - ./wavefile:/opt/earthworm/wavefile:ro
     ipc: host
     network_mode: host
-    command: bash -c "source /opt/earthworm/ew_linux.bash && startstop"
+    command: bash -c "source /opt/earthworm/run/params/ew_linux.bash && startstop"
     stdin_open: true
     tty: true
+#  earthworm:
+#    image: cwadayi/earthworm_ubuntu22.04_eew:v1
+#    container_name: earthworm
+#    ipc: host
+#    network_mode: host
+#    command: bash -c "source /opt/earthworm/ew_linux.bash && startstop"
+#    stdin_open: true
+#    tty: true
