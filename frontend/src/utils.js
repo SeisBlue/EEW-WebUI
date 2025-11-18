@@ -49,16 +49,16 @@ export function isTSMIPStation(stationCode) {
  * @param {number} pga - 地動加速度峰值，單位為 gal (cm/s^2)。
  */
 export function pgaToIntensity(pga) {
-  if (pga < 0.2) return "0"; // 氣象署未定義0級，但實務上需要一個基準
-  if (pga < 0.8) return "0"; // 0.2-0.8 仍為 0 級
-  if (pga < 2.5) return "1";
-  if (pga < 8.0) return "2";
-  if (pga < 25) return "3";
-  if (pga < 80) return "4";
-  if (pga < 140) return "5-";
-  if (pga < 250) return "5+";
-  if (pga < 440) return "6-";
-  if (pga < 800) return "6+";
+  if (pga < 0.002) return "0";
+  if (pga < 0.008) return "0";
+  if (pga < 0.025) return "1";
+  if (pga < 0.08) return "2";
+  if (pga < 0.25) return "3";
+  if (pga < 0.8) return "4";
+  if (pga < 1.4) return "5-";
+  if (pga < 2.5) return "5+";
+  if (pga < 4.4) return "6-";
+  if (pga < 8.0) return "6+";
   return "7";
 }
 
