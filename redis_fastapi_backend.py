@@ -44,12 +44,12 @@ class ConnectionManager:
         if stations:
             # 前端傳來的可能是 'TWQ1' 或 'A024' 這種簡碼
             self.subscribed_stations[websocket] = set(stations)
-            logger.info(
-                f"Client {websocket.client.host} subscribed to {len(stations)} stations: {list(stations)[:5]}..."
-            )
+            # logger.info(
+            #     f"Client {websocket.client.host} subscribed to {len(stations)} stations: {list(stations)[:5]}..."
+            # )
         else:
             self.subscribed_stations[websocket] = set()
-            logger.info(f"Client {websocket.client.host} unsubscribed from all stations")
+            # logger.info(f"Client {websocket.client.host} unsubscribed from all stations")
 
     async def send_wave_packet(self, wave_packet: dict):
         """將波形資料包傳送給已訂閱的客戶端"""

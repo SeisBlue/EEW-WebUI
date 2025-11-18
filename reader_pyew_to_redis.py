@@ -224,7 +224,6 @@ def worker_text_or_binary(rname, ringid, modid, instid, msg_type, poll_delay,
                     continue
                 payload = realmsg[:rlen]
                 kind, body = parse_text_message(payload)
-                print("-" * 78)
                 print(
                     f"{category.upper()} message from {rname} {ringid} (status={status}, rlen={rlen}, kind={kind}):")
                 print(body)
@@ -252,7 +251,7 @@ def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
     """
     procs = []
     inst_id = profile_cfg.get("inst_id", 255)
-    mod_id = 135  # configurable fallback; adjust if you need a different mod id
+    mod_id = 2  # configurable fallback; adjust if you need a different mod id
 
     # waves: for each ring defined, spawn worker_wave
     for rname, ringid in profile_cfg.get("wave", {}).items():
