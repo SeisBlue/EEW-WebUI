@@ -62,13 +62,23 @@ class ConnectionManager:
             if not subscribed_codes:
                 continue
 
-            # 過濾出此客戶端訂閱的測站資料
-            # wave_id 格式為 'SM.A024.01.HLZ'，subscribed_codes 可能是 'A024'
-            filtered_batch = {
-                wave_id: wave_data
-                for wave_id, wave_data in wave_batch.items()
-                if wave_id.split(".")[1] in subscribed_codes
-            }
+            filtered_batch = {}
+            # 檢查是否有壓力測試的特殊訂閱
+            if "__ALL_Z__" in subscribed_codes:
+                # 過濾出所有 Z 軸的資料
+                filtered_batch = {
+                    wave_id: wave_data
+                    for wave_id, wave_data in wave_batch.items()
+                    if wave_id.endswith("Z")
+                }
+            else:
+                # 原本的過濾邏輯
+                # wave_id 格式為 'SM.A024.01.HLZ'，subscribed_codes 可能是 'A024'
+                filtered_batch = {
+                    wave_id: wave_data
+                    for wave_id, wave_data in wave_batch.items()
+                    if wave_id.split(".")[1] in subscribed_codes
+                }
 
             if filtered_batch:
                 # 建立針對此客戶端的資料包

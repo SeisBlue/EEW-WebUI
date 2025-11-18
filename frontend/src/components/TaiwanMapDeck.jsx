@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import PropTypes from 'prop-types'
-import { Map } from 'react-map-gl/maplibre'
+import { Map as MapGL } from 'react-map-gl/maplibre'
 import DeckGL from '@deck.gl/react'
 import { ScatterplotLayer, GeoJsonLayer } from '@deck.gl/layers'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -67,27 +67,52 @@ function TaiwanMapDeck({ stations, stationReplacements = {}, stationIntensities 
 
   // 主要測站圖層（eew_target）
   const primaryStationsLayer = useMemo(() => {
-    const data = stations.map(s => {
-      const replacement = stationReplacements[s.station]
+    // 創建一個包含所有測站的 Map，以測站代碼為 key，確保唯一性
+    const allStations = new Map()
 
-      // 獲取震度數據（優先使用替換測站的數據）
-      const stationCodeForIntensity = replacement ? replacement.replacementStation : s.station
-      const intensityData = stationIntensities[stationCodeForIntensity]
-
-      // 統一使用原始座標顯示測站
-      const coordinates = [s.longitude, s.latitude]
-
-      return {
-        ...s,
-        coordinates,
-        isReplaced: !!replacement,
-        replacementInfo: replacement,
-        replacementCoordinates: replacement
-          ? [replacement.coordinates.lon, replacement.coordinates.lat]
-          : null,
-        intensityData: intensityData // 添加震度數據
+    // 1. 添加初始的 target 測站
+    stations.forEach(s => {
+      if (s && s.station) {
+        allStations.set(s.station, s)
       }
     })
+
+    // 2. 添加從 replacement (或壓力測試) 傳入的測站
+    Object.values(stationReplacements).forEach(rep => {
+      const stationCode = rep.replacementStation
+      if (!allStations.has(stationCode)) {
+        // 如果這個測站不在初始列表裡，從 replacement 信息中構建一個測站對象
+        allStations.set(stationCode, {
+          station: stationCode,
+          latitude: rep.coordinates.lat,
+          longitude: rep.coordinates.lon
+        })
+      }
+    })
+
+    const data = Array.from(allStations.values())
+      .filter(s => s && s.longitude && s.latitude) // 過濾掉沒有經緯度的測站
+      .map(s => {
+        const replacement = stationReplacements[s.station]
+
+        // 獲取震度數據（優先使用替換測站的數據）
+        const stationCodeForIntensity = replacement ? replacement.replacementStation : s.station
+        const intensityData = stationIntensities[stationCodeForIntensity]
+
+        // 統一使用原始座標顯示測站
+        const coordinates = [s.longitude, s.latitude]
+
+        return {
+          ...s,
+          coordinates,
+          isReplaced: !!replacement,
+          replacementInfo: replacement,
+          replacementCoordinates: replacement
+            ? [replacement.coordinates.lon, replacement.coordinates.lat]
+            : null,
+          intensityData: intensityData // 添加震度數據
+        }
+      })
 
     return new ScatterplotLayer({
       id: 'primary-stations',
@@ -126,7 +151,7 @@ function TaiwanMapDeck({ stations, stationReplacements = {}, stationIntensities 
         getFillColor: [stationIntensities, stationReplacements],
         getLineColor: [stationIntensities],
         getRadius: [stationIntensities], // 新增 getRadius 的 trigger
-        getPosition: [stations]
+        getPosition: [stations, stationReplacements] // 當 replacement 變動時也更新
       }
     })
   }, [stations, stationReplacements, stationIntensities])
@@ -143,7 +168,7 @@ function TaiwanMapDeck({ stations, stationReplacements = {}, stationIntensities 
         controller={true}
         layers={layers}
       >
-        <Map
+        <MapGL
           mapStyle={MAP_STYLE}
         />
       </DeckGL>
