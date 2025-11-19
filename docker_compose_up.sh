@@ -1,0 +1,1 @@
+docker compose -f docker-compose.mac.yml up; docker compose -f docker-compose.mac.yml down
