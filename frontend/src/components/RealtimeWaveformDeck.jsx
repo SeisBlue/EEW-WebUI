@@ -19,7 +19,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
   // 計算波形路徑數據（使用 PathLayer）- 優化版本
   const waveformLayers = useMemo(() => {
     const waveWidth = panelWidth * 0.75
-    const waveHeight =  45
+    const waveHeight = 45
     const xOffset = panelWidth * 0.15
     const now = renderTrigger // 使用傳入的 renderTrigger 作為當前時間
     const bottomMargin = 60  // 為時間軸留出底部空間
@@ -38,6 +38,8 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     // 合併所有基線到單個數據集
     const baselineData = []
     const waveformData = []
+    const pickLines = []
+    const pickLabels = []
 
     stations.forEach((stationCode) => {
       const centerY = stationPositions.get(stationCode)
@@ -102,6 +104,35 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
           }
         })
       }
+
+      // 處理 Pick 標記
+      if (waveData?.picks?.length > 0) {
+        waveData.picks.forEach(pick => {
+          const pickTime = pick.time
+          const timeDiff = now - pickTime
+          const timeOffset = timeDiff / 1000
+
+          if (timeOffset < 0 || timeOffset > timeWindow) return
+
+          const x = xOffset + waveWidth * (1 - timeOffset / timeWindow)
+
+          // Pick 線
+          pickLines.push({
+            path: [[x, centerY - waveHeight / 2], [x, centerY + waveHeight / 2]],
+            color: [255, 235, 59, 200], // 黃色
+            width: 2
+          })
+
+          // Pick 文字
+          pickLabels.push({
+            position: [x, centerY - waveHeight / 2 - 8],
+            text: pick.type || 'P',
+            color: [255, 235, 59, 255],
+            size: 12,
+            anchor: 'middle'
+          })
+        })
+      }
     })
 
     // 使用單個 PathLayer 繪製所有基線
@@ -134,6 +165,39 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
         capRounded: false,
         updateTriggers: {
           getPath: [waveDataMap, renderTrigger] // 當波形數據或時間變化時更新
+        }
+      }))
+    }
+
+    // 繪製 Pick 線
+    if (pickLines.length > 0) {
+      layers.push(new PathLayer({
+        id: 'pick-lines',
+        data: pickLines,
+        getPath: d => d.path,
+        getColor: d => d.color,
+        getWidth: d => d.width,
+        widthMinPixels: 1,
+        updateTriggers: {
+          getPath: [waveDataMap, renderTrigger]
+        }
+      }))
+    }
+
+    // 繪製 Pick 標籤
+    if (pickLabels.length > 0) {
+      layers.push(new TextLayer({
+        id: 'pick-labels',
+        data: pickLabels,
+        getPosition: d => d.position,
+        getText: d => d.text,
+        getColor: d => d.color,
+        getSize: d => d.size,
+        getTextAnchor: d => d.anchor,
+        fontFamily: 'monospace',
+        fontWeight: 'bold',
+        updateTriggers: {
+          getPosition: [waveDataMap, renderTrigger]
         }
       }))
     }

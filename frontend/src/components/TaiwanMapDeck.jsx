@@ -15,7 +15,7 @@ const INITIAL_VIEW_STATE = {
   bearing: 0
 };
 
-function TaiwanMap({ stations, stationIntensities }) {
+function TaiwanMap({ stations, stationIntensities, waveDataMap }) {
   const [hoverInfo, setHoverInfo] = useState(null);
 
   const layers = useMemo(() => {
@@ -39,12 +39,20 @@ function TaiwanMap({ stations, stationIntensities }) {
       radiusMinPixels: 3,
       radiusMaxPixels: 15,
       stroked: true,
-      getLineColor: [255, 255, 255, 150],
-      getLineWidth: 1,
+      getLineColor: d => {
+        const hasPick = waveDataMap?.[d.station]?.picks?.length > 0;
+        return hasPick ? [255, 235, 59, 255] : [255, 255, 255, 150]; // Yellow if pick, else white transparent
+      },
+      getLineWidth: d => {
+        const hasPick = waveDataMap?.[d.station]?.picks?.length > 0;
+        return hasPick ? 2 : 1;
+      },
       lineWidthMinPixels: 1,
       updateTriggers: {
         getFillColor: [stationIntensities],
-        getRadius: [stationIntensities]
+        getRadius: [stationIntensities],
+        getLineColor: [waveDataMap],
+        getLineWidth: [waveDataMap]
       }
     });
 
@@ -63,7 +71,7 @@ function TaiwanMap({ stations, stationIntensities }) {
     }) : null;
 
     return [stationPoints, stationLabels];
-  }, [stations, stationIntensities, hoverInfo]);
+  }, [stations, stationIntensities, hoverInfo, waveDataMap]);
 
   const handleHover = ({ object, x, y }) => {
     setHoverInfo({ object, x, y });

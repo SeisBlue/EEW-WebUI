@@ -4,7 +4,7 @@ import Papa from 'papaparse';
 import TaiwanMap from './components/TaiwanMapDeck';
 import RealtimeWaveformDeck from './components/RealtimeWaveformDeck';
 import StationSelection from './components/StationSelection.jsx';
-import { getIntensityColor, pgaToIntensity, extractStationCode } from './utils';
+import { getIntensityColor, pgaToIntensity, extractStationCode, parseEarthwormTime } from './utils';
 
 const TIME_WINDOW = 30;
 // 所有測站列表 - 按緯度排列顯示
@@ -29,6 +29,7 @@ function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [socket, setSocket] = useState(null);
   const [wavePackets, setWavePackets] = useState([]);
+  const [pickPackets, setPickPackets] = useState([]);
   const [latestWaveTime, setLatestWaveTime] = useState(null);
   const [waveDataMap, setWaveDataMap] = useState({});
 
@@ -87,6 +88,9 @@ function App() {
       if (message.event === 'wave_packet') {
         setLatestWaveTime(new Date().toLocaleString('zh-TW'));
         setWavePackets(prev => [message.data, ...prev].slice(0, 10));
+      } else if (message.event === 'pick_packet') {
+        console.log("Received pick_packet:", message.data);
+        setPickPackets(prev => [message.data, ...prev].slice(0, 20));
       }
     };
 
@@ -228,9 +232,61 @@ function App() {
       });
 
       setStationIntensities(newStationIntensities);
+      setStationIntensities(newStationIntensities);
       return updated;
     });
   }, [wavePackets]);
+
+  // Process new pick packets
+  useEffect(() => {
+    if (pickPackets.length === 0) return;
+    const latestPacket = pickPackets[0];
+    const pickData = latestPacket.content;
+
+    if (!pickData || !pickData.station || !pickData.pick_time) return;
+
+    setWaveDataMap(prev => {
+      const updated = { ...prev };
+      const stationCode = pickData.station;
+
+      // Ensure station data exists
+      const prevStationData = updated[stationCode] || {
+        dataPoints: [], pgaHistory: [], lastPga: 0, lastEndTime: null,
+        recentStats: { points: [], totalSumSquares: 0, totalMaxAbs: 0, totalCount: 0 },
+        picks: []
+      };
+
+      const stationData = { ...prevStationData };
+
+      // Ensure picks array exists and is copied
+      if (!stationData.picks) {
+        stationData.picks = [];
+      } else {
+        stationData.picks = [...stationData.picks];
+      }
+
+      const pickTime = parseEarthwormTime(pickData.pick_time);
+      if (pickTime) {
+        // Check for duplicates
+        const isDuplicate = stationData.picks.some(p => p.id === pickData.pickid);
+        if (!isDuplicate) {
+          stationData.picks.push({
+            time: pickTime,
+            type: 'P',
+            id: pickData.pickid
+          });
+        }
+
+        // Clean up old picks
+        const now = Date.now();
+        const cutoff = now - TIME_WINDOW * 1000;
+        stationData.picks = stationData.picks.filter(p => p.time >= cutoff);
+      }
+
+      updated[stationCode] = stationData;
+      return updated;
+    });
+  }, [pickPackets]);
 
   // Calculate the list of stations to display in the waveform panel
   const displayStations = useMemo(() => {
@@ -334,8 +390,8 @@ function App() {
           <section className="section map-section">
             <div className="section-header">
               <h2>測站分布</h2>
-              <button 
-                className="select-station-button" 
+              <button
+                className="select-station-button"
                 onClick={() => setView(prev => prev === 'waveform' ? 'stationSelection' : 'waveform')}
               >
                 {view === 'waveform' ? '選擇顯示測站' : '返回波形圖'}
@@ -344,6 +400,7 @@ function App() {
             <TaiwanMap
               stations={mapDisplayStations}
               stationIntensities={stationIntensities}
+              waveDataMap={waveDataMap}
             />
           </section>
         </div>
