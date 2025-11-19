@@ -72,17 +72,24 @@ function StationSelection({
             預設 PWS 參考點
           </button>
           <button
-            className={`preset-button ${selectionMode === 'all' ? 'active' : ''}`}
-            onClick={() => handlePresetClick('all')}
+            className={`preset-button ${selectionMode === 'active' ? 'active' : ''}`}
+            onClick={() => handlePresetClick('active')}
           >
-            全部 Z 軸 (壓力測試)
+            即時訊號測站
+          </button>
+          <button
+            className={`preset-button ${selectionMode === 'all_site' ? 'active' : ''}`}
+            onClick={() => handlePresetClick('all_site')}
+          >
+            所有測站清單
           </button>
         </div>
         <p className="preset-info">
           目前模式: {
             {
               'default': '預設的 CWASN 測站列表。',
-              'all': '顯示所有接收到 Z 軸訊號的測站 (壓力測試模式)。',
+              'active': '顯示目前接收到訊號的活躍測站。',
+              'all_site': '顯示系統中登記的所有測站。',
               'custom': '手動選擇要顯示的測站。'
             }[selectionMode]
           }

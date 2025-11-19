@@ -22,7 +22,7 @@ const EEW_TARGETS = [
 function App() {
   // View and selection state
   const [view, setView] = useState('waveform'); // 'waveform' or 'stationSelection'
-  const [selectionMode, setSelectionMode] = useState('default'); // 'default', 'all', 'custom'
+  const [selectionMode, setSelectionMode] = useState('default'); // 'default', 'active', 'all_site', 'custom'
   const [customStations, setCustomStations] = useState([]);
 
   // WebSocket and data state
@@ -235,9 +235,11 @@ function App() {
   // Calculate the list of stations to display in the waveform panel
   const displayStations = useMemo(() => {
     switch (selectionMode) {
-      case 'all':
+      case 'active':
         const received = Object.keys(waveDataMap);
         return [...new Set(received)].sort((a, b) => (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0));
+      case 'all_site':
+        return Object.keys(stationMap).sort((a, b) => (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0));
       case 'custom':
         return customStations;
       case 'default':
@@ -278,7 +280,7 @@ function App() {
   // Subscribe to WebSocket station data
   useEffect(() => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    const stationsToSubscribe = selectionMode === 'all' ? ['__ALL_Z__'] : displayStations;
+    const stationsToSubscribe = selectionMode === 'active' ? ['__ALL_Z__'] : displayStations;
     if (stationsToSubscribe.length > 0) {
       socket.send(JSON.stringify({ event: 'subscribe_stations', data: { stations: stationsToSubscribe } }));
     }
@@ -302,7 +304,8 @@ function App() {
   const waveformTitle = useMemo(() => {
     const count = displayStations.length;
     switch (selectionMode) {
-      case 'all': return `壓力測試：所有 Z 軸波形 (${count} 站)`;
+      case 'active': return `即時訊號測站 (${count} 站)`;
+      case 'all_site': return `所有測站清單 (${count} 站)`;
       case 'custom': return `自訂測站列表 (${count} 站)`;
       default: return `全台 PWS 參考點 - ${count} 站`;
     }
