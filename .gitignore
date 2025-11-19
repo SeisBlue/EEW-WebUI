@@ -7,3 +7,6 @@ pick_params/
 params/pfile*
 .DS_Store
 .idea
+*/node_modules/*
+.pnpm-store/ 
+pnpm-lock.yaml

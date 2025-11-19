@@ -8,11 +8,11 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:5001',
+        target: `http://${process.env.BACKEND_HOST || 'localhost'}:5001`,
         changeOrigin: true
       },
       '/ws': {
-        target: 'http://localhost:5001',
+        target: `http://${process.env.BACKEND_HOST || 'localhost'}:5001`,
         ws: true
       }
     }
