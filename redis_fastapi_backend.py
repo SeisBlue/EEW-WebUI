@@ -1,6 +1,7 @@
 import asyncio
 import time
 import argparse
+import os
 from typing import List, Set, Dict
 import redis.asyncio as redis
 import numpy as np
@@ -12,7 +13,7 @@ from scipy.signal import detrend, iirfilter, sosfilt, zpk2sos
 
 # --- Redis 和 FastAPI 配置 ---
 REDIS_CONFIG = {
-    "host": "localhost",
+    "host": os.getenv("REDIS_HOST", "localhost"),
     "port": 6379,
     "db": 0,
 }

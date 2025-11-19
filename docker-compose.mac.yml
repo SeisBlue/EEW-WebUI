@@ -1,25 +1,30 @@
 services:
   earthworm:
-    image: cwadayi/earthworm_ubuntu22.04_eew:v1
+    image: seisblue/earthworm
     container_name: earthworm
+    volumes:
+      - ./:/workspace
+      - ./params:/opt/earthworm/run/params
+      - ./wavefile:/opt/earthworm/wavefile:ro
     ipc: host
-    network_mode: host
-    command: bash -c "source /opt/earthworm/ew_linux.bash && startstop"
+    command: bash -c "source /opt/earthworm/run/params/ew_linux.bash && startstop"
     stdin_open: true
     tty: true
   redis:
     image: redis:7-alpine
     container_name: redis
     command: redis-server --save "" --appendonly no
-    network_mode: host
+    ports:
+      - "6379:6379"
   reader:
     image: seisblue/eew
     container_name: reader
     volumes:
       - ./:/workspace
     ipc: host
-    network_mode: host
-    command: bash -c "sleep 5 && /usr/local/bin/python /workspace/reader_pyew_to_redis.py -e test"
+    environment:
+      - REDIS_HOST=redis
+    command: bash -c "sleep 5 && /usr/local/bin/python /workspace/reader_pyew_to_redis.py -e jimmy"
     restart: on-failure
     depends_on:
       - earthworm
@@ -30,8 +35,11 @@ services:
     volumes:
       - ./:/workspace
     ipc: host
-    network_mode: host
-    command: ["/usr/local/bin/python", "/workspace/redis_fastapi_backend.py"]
+    environment:
+      - REDIS_HOST=redis
+    ports:
+      - "5001:5001"
+    command: [ "/usr/local/bin/python", "/workspace/redis_fastapi_backend.py" ]
     depends_on:
       - redis
   frontend:
@@ -40,6 +48,8 @@ services:
     volumes:
       - ./:/workspace
     ipc: host
-    network_mode: host
     working_dir: /workspace/frontend
-    command: ["/usr/bin/pnpm", "run", "dev", "--host"]
+    ports:
+      - "3000:3000"
+    command: [ "/usr/bin/pnpm", "run", "dev", "--host" ]
+

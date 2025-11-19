@@ -25,6 +25,7 @@ import time
 import argparse
 import multiprocessing as mp
 import sys
+import os
 from pprint import pprint
 from datetime import datetime
 import redis
@@ -68,7 +69,7 @@ MSG_TYPE_MAP = {
 }
 
 redis_config = {
-    "host": "localhost",
+    "host": os.getenv("REDIS_HOST", "localhost"),
     "port": 6379,
     "db": 0,
 }
