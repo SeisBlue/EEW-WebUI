@@ -11,11 +11,7 @@ const LAT_MIN = 21.8 // 涵蓋整個台灣（包括離島）
 // 時間軸設定
 const SAMPLE_RATE = 100 // 100 Hz
 
-/**
- * DeckGL 波形面板組件 - 使用 memo 優化
- */
-const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations, stationMap, waveDataMap, latMin, latMax, simpleLayout, panelWidth, panelHeight, renderTrigger, timeWindow }) {
-  const [hoveredStation] = useState(null)
+const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations, stationMap, waveDataMap, latMin, latMax, panelWidth, panelHeight, renderTrigger, timeWindow }) {
 
   const minLat = latMin ?? LAT_MIN
   const maxLat = latMax ?? LAT_MAX
@@ -23,31 +19,19 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
   // 計算波形路徑數據（使用 PathLayer）- 優化版本
   const waveformLayers = useMemo(() => {
     const waveWidth = panelWidth * 0.75
-    const waveHeight = simpleLayout ? 60 : 45 // 增加波形高度：從 40/30 增加到 60/45
+    const waveHeight =  45
     const xOffset = panelWidth * 0.15
     const now = renderTrigger // 使用傳入的 renderTrigger 作為當前時間
     const bottomMargin = 60  // 為時間軸留出底部空間
 
     // 預計算所有測站的 Y 位置
     const stationPositions = new Map()
-    stations.forEach((stationCode, index) => {
+    const availableHeight = panelHeight - bottomMargin
+    stations.forEach((stationCode) => {
       const station = stationMap[stationCode]
-      if (!station) return
+      if (!station || !station.latitude) return
 
-      let centerY
-      if (simpleLayout) {
-        const stationSpacing = waveHeight * 1.0
-        const topMargin = waveHeight * 1.0
-        const totalStationsHeight = stationSpacing * (stations.length - 1)
-        const availableBottomMargin = panelHeight - bottomMargin - topMargin - totalStationsHeight
-        const adjustedTopMargin = availableBottomMargin < waveHeight * 0.8 ? topMargin * 0.8 : topMargin
-        centerY = adjustedTopMargin + stationSpacing * index
-      } else {
-        if (!station.latitude) return
-        // 調整為可用高度（扣除底部時間軸空間）
-        const availableHeight = panelHeight - bottomMargin
-        centerY = ((maxLat - station.latitude) / (maxLat - minLat)) * availableHeight
-      }
+      const centerY = ((maxLat - station.latitude) / (maxLat - minLat)) * availableHeight
       stationPositions.set(stationCode, centerY)
     })
 
@@ -59,14 +43,13 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       const centerY = stationPositions.get(stationCode)
       if (centerY === undefined) return
 
-      const isHovered = hoveredStation === stationCode
       const waveData = waveDataMap[stationCode]
 
       // 添加基線
       baselineData.push({
         path: [[xOffset, centerY], [xOffset + waveWidth, centerY]],
-        color: isHovered ? [255, 193, 7, 76] : [255, 255, 255, 26],
-        width: isHovered ? 1 : 0.5
+        color: [255, 255, 255, 26],
+        width: 0.5
       })
 
       // 處理波形數據
@@ -113,8 +96,8 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
           if (pathPoints.length > 1) {
             waveformData.push({
               path: pathPoints,
-              color: isHovered ? [255, 193, 7, 255] : [76, 175, 80, 230],
-              width: isHovered ? 2.0 : 1.2
+              color: [76, 175, 80, 230],
+              width: 1.2
             })
           }
         })
@@ -134,8 +117,6 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
         widthMinPixels: 0.5,
         getDashArray: [3, 3],
         updateTriggers: {
-          getColor: hoveredStation,
-          getWidth: hoveredStation
         }
       }))
     }
@@ -152,54 +133,42 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
         jointRounded: false, // 關閉圓角以提升性能
         capRounded: false,
         updateTriggers: {
-          getColor: hoveredStation,
-          getWidth: hoveredStation,
           getPath: [waveDataMap, renderTrigger] // 當波形數據或時間變化時更新
         }
       }))
     }
 
     return layers
-  }, [stations, stationMap, waveDataMap, hoveredStation, minLat, maxLat, simpleLayout, panelWidth, panelHeight, title, renderTrigger, timeWindow])
+  }, [stations, stationMap, waveDataMap, minLat, maxLat, panelWidth, panelHeight, title, renderTrigger, timeWindow])
 
   // 文字標籤圖層 - 優化版本
   const labelLayers = useMemo(() => {
     const waveWidth = panelWidth * 0.75
-    const waveHeight = simpleLayout ? 60 : 45 // 增加波形高度：從 40/30 增加到 60/45
     const xOffset = panelWidth * 0.15
     const bottomMargin = 60  // 為時間軸留出底部空間
 
     const labels = []
 
-    stations.forEach((stationCode, index) => {
+    stations.forEach((stationCode) => {
       const station = stationMap[stationCode]
       if (!station) return
 
       // 計算 Y 位置
       let centerY
-      if (simpleLayout) {
-        const stationSpacing = waveHeight * 1.0
-        const topMargin = waveHeight * 1.0
-        const totalStationsHeight = stationSpacing * (stations.length - 1)
-        const availableBottomMargin = panelHeight - bottomMargin - topMargin - totalStationsHeight
-        const adjustedTopMargin = availableBottomMargin < waveHeight * 0.8 ? topMargin * 0.8 : topMargin
-        centerY = adjustedTopMargin + stationSpacing * index
-      } else {
-        if (!station.latitude) return
-        // 調整為可用高度（扣除底部時間軸空間）
-        const availableHeight = panelHeight - bottomMargin
-        centerY = ((maxLat - station.latitude) / (maxLat - minLat)) * availableHeight
-      }
+
+      if (!station.latitude) return
+      // 調整為可用高度（扣除底部時間軸空間）
+      const availableHeight = panelHeight - bottomMargin
+      centerY = ((maxLat - station.latitude) / (maxLat - minLat)) * availableHeight
 
       const waveData = waveDataMap[stationCode]
-      const isHovered = hoveredStation === stationCode
 
       // 測站代碼標籤
       labels.push({
         position: [xOffset - 8, centerY],
         text: stationCode,
-        color: isHovered ? [255, 193, 7] : (waveData ? [224, 224, 224] : [102, 102, 102]),
-        size: isHovered ? 11 : 10,
+        color: waveData ? [224, 224, 224] : [102, 102, 102],
+        size: 10,
         anchor: 'end',
         alignmentBaseline: 'center'
       })
@@ -209,32 +178,19 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
         labels.push({
           position: [xOffset + waveWidth + 5, centerY - 8],
           text: station.station_zh,
-          color: isHovered ? [255, 193, 7] : [224, 224, 224],
-          size: isHovered ? 10 : 9,
+          color: [224, 224, 224],
+          size: 9,
           anchor: 'start',
           alignmentBaseline: 'center'
         })
       }
-
       // PGA 數值
       if (waveData?.lastPga) {
         labels.push({
           position: [xOffset + waveWidth + 5, centerY + 2],
           text: `PGA: ${waveData.lastPga.toFixed(2)}`,
-          color: isHovered ? [255, 193, 7] : [76, 175, 80],
-          size: isHovered ? 10 : 9,
-          anchor: 'start',
-          alignmentBaseline: 'center'
-        })
-      }
-
-      // 縮放範圍
-      if (waveData?.displayScale) {
-        labels.push({
-          position: [xOffset + waveWidth + 5, centerY + 11],
-          text: `±${waveData.displayScale.toFixed(2)}`,
-          color: isHovered ? [255, 193, 7] : [144, 202, 249],
-          size: isHovered ? 9 : 8,
+          color: [76, 175, 80],
+          size: 9,
           anchor: 'start',
           alignmentBaseline: 'center'
         })
@@ -291,17 +247,14 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       fontFamily: 'monospace',
       fontWeight: 'normal',
       updateTriggers: {
-        getColor: [hoveredStation, waveDataMap],
-        getSize: hoveredStation,
+        getColor: waveDataMap,
         getText: [waveDataMap, renderTrigger] // 添加 renderTrigger 以更新時間顯示
       }
     })]
-  }, [stations, stationMap, waveDataMap, hoveredStation, minLat, maxLat, simpleLayout, panelWidth, panelHeight, renderTrigger, timeWindow])
+  }, [stations, stationMap, waveDataMap, minLat, maxLat, panelWidth, panelHeight, renderTrigger, timeWindow])
 
   // 緯度網格線
   const gridLayers = useMemo(() => {
-    if (simpleLayout) return []
-
     const layers = []
     const gridLines = []
     const gridLabels = []
@@ -344,7 +297,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     }))
 
     return layers
-  }, [minLat, maxLat, simpleLayout, panelWidth, panelHeight])
+  }, [minLat, maxLat, panelWidth, panelHeight])
 
   // 時間軸線
   const timeAxisLayer = useMemo(() => {
@@ -420,7 +373,6 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     prevProps.waveDataMap === nextProps.waveDataMap &&
     prevProps.latMin === nextProps.latMin &&
     prevProps.latMax === nextProps.latMax &&
-    prevProps.simpleLayout === nextProps.simpleLayout &&
     prevProps.panelWidth === nextProps.panelWidth &&
     prevProps.panelHeight === nextProps.panelHeight &&
     prevProps.renderTrigger === nextProps.renderTrigger && // 比較 renderTrigger
@@ -435,7 +387,6 @@ GeographicWavePanel.propTypes = {
   waveDataMap: PropTypes.object.isRequired,
   latMin: PropTypes.number,
   latMax: PropTypes.number,
-  simpleLayout: PropTypes.bool,
   panelWidth: PropTypes.number.isRequired,
   panelHeight: PropTypes.number.isRequired,
   renderTrigger: PropTypes.number.isRequired,
@@ -445,7 +396,7 @@ GeographicWavePanel.propTypes = {
 function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title, timeWindow }) {
   const [renderTrigger, setRenderTrigger] = useState(Date.now()) // 使用時間戳作為觸發器
   const panelRef = useRef(null)
-  const animationFrameRef = useRef() // 用於保存 requestAnimationFrame 的 ID
+  const animationFrameRef = useRef(null) // 用於保存 requestAnimationFrame 的 ID
   const [dimensions, setDimensions] = useState(null)
 
   // --- 優化：使用 requestAnimationFrame 實現平滑滾動 ---
@@ -506,7 +457,6 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
             waveDataMap={waveDataMap}
             latMin={LAT_MIN}
             latMax={LAT_MAX}
-            simpleLayout={false} // 壓力測試時也使用地理佈局
             panelWidth={dimensions.width}
             panelHeight={dimensions.height}
             renderTrigger={renderTrigger}
