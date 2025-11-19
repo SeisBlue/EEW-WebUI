@@ -30,7 +30,12 @@ function TaiwanMap({ stations, stationIntensities, waveDataMap }) {
       getPosition: d => [d.longitude, d.latitude],
       getFillColor: d => {
         const hasRecentData = waveDataMap?.[d.station]?.pgaHistory?.length > 0;
-        if (!hasRecentData) return [0, 0, 0, 0]; // Transparent (Hollow) if no data
+        // const hasPick = waveDataMap?.[d.station]?.picks?.length > 0;
+        
+        // Only fill if there is waveform data. 
+        // If there is only a pick but no waveform, it should remain hollow (transparent)
+        // but the yellow outline (handled in getLineColor) will still show.
+        if (!hasRecentData) return [0, 0, 0, 0]; 
 
         const intensityData = stationIntensities[d.station];
         return intensityData ? intensityData.color : [0, 0, 0, 0];

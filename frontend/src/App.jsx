@@ -320,8 +320,16 @@ function App() {
   // Calculate the list of stations to display on the map
   const mapDisplayStations = useMemo(() => {
     const targetStationsMap = new Map(allTargetStations.map(s => [s.station, s]));
+    const stationsToShow = new Set(displayStations);
 
-    return displayStations
+    // Add stations with active picks to the map, even if not in displayStations
+    Object.keys(waveDataMap).forEach(stationCode => {
+      if (waveDataMap[stationCode]?.picks?.length > 0) {
+        stationsToShow.add(stationCode);
+      }
+    });
+
+    return Array.from(stationsToShow)
       .map(stationCode => {
         if (targetStationsMap.has(stationCode)) {
           return targetStationsMap.get(stationCode);
@@ -343,7 +351,7 @@ function App() {
         return null;
       })
       .filter(Boolean);
-  }, [displayStations, allTargetStations, stationMap]);
+  }, [displayStations, allTargetStations, stationMap, waveDataMap]);
 
 
   // Subscribe to WebSocket station data
