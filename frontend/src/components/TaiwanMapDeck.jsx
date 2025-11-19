@@ -29,8 +29,11 @@ function TaiwanMap({ stations, stationIntensities, waveDataMap }) {
       pickable: true,
       getPosition: d => [d.longitude, d.latitude],
       getFillColor: d => {
+        const hasRecentData = waveDataMap?.[d.station]?.pgaHistory?.length > 0;
+        if (!hasRecentData) return [0, 0, 0, 0]; // Transparent (Hollow) if no data
+
         const intensityData = stationIntensities[d.station];
-        return intensityData ? intensityData.color : [100, 100, 100, 100];
+        return intensityData ? intensityData.color : [0, 0, 0, 0];
       },
       getRadius: d => {
         const intensityData = stationIntensities[d.station];
@@ -45,11 +48,11 @@ function TaiwanMap({ stations, stationIntensities, waveDataMap }) {
       },
       getLineWidth: d => {
         const hasPick = waveDataMap?.[d.station]?.picks?.length > 0;
-        return hasPick ? 2 : 1;
+        return hasPick ? 20 : 1;
       },
       lineWidthMinPixels: 1,
       updateTriggers: {
-        getFillColor: [stationIntensities],
+        getFillColor: [stationIntensities, waveDataMap],
         getRadius: [stationIntensities],
         getLineColor: [waveDataMap],
         getLineWidth: [waveDataMap]

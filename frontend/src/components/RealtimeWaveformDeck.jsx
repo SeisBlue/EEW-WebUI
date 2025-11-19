@@ -409,11 +409,18 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     zoom: 0
   }
 
+  // 計算有資料的測站數量
+  const activeStationCount = useMemo(() => {
+    return stations.filter(stationCode => {
+      return waveDataMap?.[stationCode]?.pgaHistory?.length > 0;
+    }).length;
+  }, [stations, waveDataMap]);
+
   return (
     <div className="geographic-wave-panel">
       <div className="panel-header">
         <h3>{title}</h3>
-        <span className="station-count">{stations.length} 站</span>
+        <span className="station-count">{activeStationCount} / {stations.length} 站</span>
       </div>
       <div className="deckgl-container" style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#0a0e27' }}>
         <DeckGL

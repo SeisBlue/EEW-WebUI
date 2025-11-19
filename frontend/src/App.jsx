@@ -35,7 +35,6 @@ function App() {
 
   // Station and map state
   const [allTargetStations, setAllTargetStations] = useState([]); // All stations from eew_target.csv
-  const [stationIntensities, setStationIntensities] = useState({});
   const [stationMap, setStationMap] = useState({});
 
   // Load initial station metadata
@@ -186,7 +185,6 @@ function App() {
         });
       }
 
-      const newStationIntensities = { ...stationIntensities };
       const cutoffTime = now - TIME_WINDOW * 1000;
       const recentCutoff = now - 10 * 1000;
 
@@ -219,23 +217,38 @@ function App() {
         } else if (stationData.dataPoints.length === 0) {
           stationData.displayScale = 1.0;
         }
+        
+        // Clean up old picks
+        if (stationData.picks) {
+             stationData.picks = stationData.picks.filter(p => p.time >= cutoffTime);
+        }
 
-        const maxPga30s = stationData.pgaHistory.reduce((max, item) => Math.max(max, item.pga), 0);
-        const intensity = pgaToIntensity(maxPga30s);
-        const color = getIntensityColor(intensity);
-
-        newStationIntensities[stationCode] = {
-          pga: maxPga30s,
-          intensity: intensity,
-          color: color
-        };
+        updated[stationCode] = stationData;
       });
 
-      setStationIntensities(newStationIntensities);
-      setStationIntensities(newStationIntensities);
       return updated;
     });
   }, [wavePackets]);
+
+  // Derive station intensities from waveDataMap
+  const stationIntensities = useMemo(() => {
+    const intensities = {};
+    Object.keys(waveDataMap).forEach(stationCode => {
+      const stationData = waveDataMap[stationCode];
+      if (!stationData || !stationData.pgaHistory) return;
+      
+      const maxPga30s = stationData.pgaHistory.reduce((max, item) => Math.max(max, item.pga), 0);
+      const intensity = pgaToIntensity(maxPga30s);
+      const color = getIntensityColor(intensity);
+      
+      intensities[stationCode] = {
+        pga: maxPga30s,
+        intensity: intensity,
+        color: color
+      };
+    });
+    return intensities;
+  }, [waveDataMap]);
 
   // Process new pick packets
   useEffect(() => {
@@ -353,7 +366,6 @@ function App() {
       setCustomStations(selectedStations);
     }
     setWavePackets([]);
-    setStationIntensities({});
     setWaveDataMap({});
   };
 
