@@ -1,15 +1,14 @@
 services:
   earthworm:
+    platform: linux/amd64
     image: seisblue/earthworm
     container_name: earthworm
     volumes:
       - ./:/workspace
       - ./params:/opt/earthworm/run/params
       - ./wavefile:/opt/earthworm/wavefile:ro
-    ipc: host
+    ipc: shareable
     command: bash -c "source /opt/earthworm/run/params/ew_linux.bash && startstop"
-    stdin_open: true
-    tty: true
   redis:
     image: redis:7-alpine
     container_name: redis
@@ -21,7 +20,7 @@ services:
     container_name: reader
     volumes:
       - ./:/workspace
-    ipc: host
+    ipc: container:earthworm
     environment:
       - REDIS_HOST=redis
     command: bash -c "sleep 5 && /usr/local/bin/python /workspace/reader_pyew_to_redis.py -e jimmy"
@@ -30,11 +29,11 @@ services:
       - earthworm
       - redis
   backend:
+    platform: linux/amd64
     image: seisblue/eew
     container_name: backend
     volumes:
       - ./:/workspace
-    ipc: host
     environment:
       - REDIS_HOST=redis
     ports:
@@ -47,7 +46,6 @@ services:
     container_name: frontend
     volumes:
       - ./:/workspace
-    ipc: host
     working_dir: /workspace/frontend
     ports:
       - "3000:3000"
