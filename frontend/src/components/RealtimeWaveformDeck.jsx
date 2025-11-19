@@ -472,9 +472,14 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
     const updateSize = () => {
       if (panelRef.current) {
         const rect = panelRef.current.getBoundingClientRect()
-        setDimensions({
-          width: rect.width,
-          height: rect.height
+        setDimensions(prev => {
+          if (prev.width === rect.width && prev.height === rect.height) {
+            return prev
+          }
+          return {
+            width: rect.width,
+            height: rect.height
+          }
         })
       }
     }
