@@ -166,13 +166,19 @@ def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
     module = EWModule(def_ring=1000, mod_id=modid, inst_id=instid, hb_time=15, db=False)
     module.add_ring(ringid)
     buf_index = len(module.ringcom) - 1
+    
+    wave_count = 0
+    batch_count = 0
+    skip_trim_counter = 0  # Only trim every N writes to reduce overhead
+    
     try:
         while True:
             res = module.get_wave(buf_index)
             if res:
+                wave_count += 1
                 station = res.get('station')
                 channel = res.get('channel')
-
+                
                 if station and channel:
                     stream_key = f"wave:{station}:{channel}"
                     
@@ -182,17 +188,28 @@ def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
                         message_payload['data'] = res['data'].tobytes()
 
                     # Add to Redis Stream
-                    msg_id = redis_client.xadd(stream_key, message_payload)
-
-                    stream_trim_seconds = 120
-                    min_id_timestamp = int((time.time() - stream_trim_seconds) * 1000)
                     try:
-                        # 使用原生命令確保傳入正確參數：XTRIM <key> MINID ~ <ms>-0
-                        redis_client.execute_command('XTRIM', stream_key, 'MINID', '~',
-                                                     f'{min_id_timestamp}-0')
+                        msg_id = redis_client.xadd(stream_key, message_payload)
+                        batch_count += 1
+                        
+                        # Only trim every 100 writes to reduce overhead
+                        skip_trim_counter += 1
+                        if skip_trim_counter >= 1000:
+                            stream_trim_seconds = 60
+                            min_id_timestamp = int((time.time() - stream_trim_seconds) * 1000)
+                            try:
+                                redis_client.execute_command('XTRIM', stream_key, 'MINID', '~',
+                                                             f'{min_id_timestamp}-0')
+                            except Exception as e:
+                                pass  # Ignore trim errors
+                            skip_trim_counter = 0
                     except Exception as e:
-                        print(f"[wave worker] {rname}={ringid} xtrim failed: {e}",
-                              file=sys.stderr)
+                        print(f"[wave worker] {rname}={ringid} redis write failed: {e}", file=sys.stderr)
+                        
+                # Log statistics every 100 waves
+                if wave_count % 1000 == 0:
+                    print(f"[wave worker] {rname}={ringid} processed {wave_count} waves, {batch_count} written to Redis")
+                    
             else:
                 time.sleep(poll_delay)
     except KeyboardInterrupt:
@@ -314,6 +331,7 @@ def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
         p.daemon = True
         p.start()
         procs.append(p)
+        print(f"[wave worker] {profile_name}={ringid} started")
 
     # picks
     for rname, ringid in profile_cfg.get("pick", {}).items():
@@ -323,6 +341,7 @@ def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
         p.daemon = True
         p.start()
         procs.append(p)
+        print(f"[pick worker] {profile_name}={ringid} started")
 
     # eew
     for rname, ringid in profile_cfg.get("eew", {}).items():
@@ -332,6 +351,7 @@ def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
         p.daemon = True
         p.start()
         procs.append(p)
+        print(f"[eew worker] {profile_name}={ringid} started")
 
     return procs
 

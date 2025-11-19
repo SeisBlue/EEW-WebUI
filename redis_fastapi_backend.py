@@ -47,12 +47,12 @@ class ConnectionManager:
         if stations:
             # 前端傳來的可能是 'TWQ1' 或 'A024' 這種簡碼
             self.subscribed_stations[websocket] = set(stations)
-            # logger.info(
-            #     f"Client {websocket.client.host} subscribed to {len(stations)} stations: {list(stations)[:5]}..."
-            # )
+            logger.info(
+                f"Client {websocket.client.host} subscribed to {len(stations)} stations: {list(stations)[:10]}..."
+            )
         else:
             self.subscribed_stations[websocket] = set()
-            # logger.info(f"Client {websocket.client.host} unsubscribed from all stations")
+            logger.info(f"Client {websocket.client.host} unsubscribed from all stations")
 
     async def send_wave_packet(self, wave_packet: dict):
         """將波形資料包傳送給已訂閱的客戶端"""
@@ -72,7 +72,7 @@ class ConnectionManager:
                 filtered_batch = {
                     wave_id: wave_data
                     for wave_id, wave_data in wave_batch.items()
-                    if wave_id.endswith("Z")
+                    if len(wave_id.split(".")) >= 4 and wave_id.split(".")[3].endswith("Z")
                 }
             else:
                 # 原本的過濾邏輯
@@ -80,7 +80,7 @@ class ConnectionManager:
                 filtered_batch = {
                     wave_id: wave_data
                     for wave_id, wave_data in wave_batch.items()
-                    if wave_id.split(".")[1] in subscribed_codes
+                    if len(wave_id.split(".")) >= 2 and wave_id.split(".")[1] in subscribed_codes
                 }
 
             if filtered_batch:
@@ -139,27 +139,41 @@ async def websocket_endpoint(websocket: WebSocket):
 async def redis_wave_reader():
     """
     持續從 Redis 讀取所有 'wave:*' stream，批次處理後推送給 WebSocket 管理器。
+    動態掃描新的 streams。
     """
     logger.info("Starting Redis wave reader...")
     redis_client = redis.Redis(**REDIS_CONFIG, decode_responses=False)
     
-    stream_keys_bytes = [key async for key in redis_client.scan_iter("wave:*:*")]
-    if not stream_keys_bytes:
-        logger.warning("No 'wave:*' streams found in Redis. Waiting for streams to be created...")
-        await asyncio.sleep(5)
-        # Retry once
-        stream_keys_bytes = [key async for key in redis_client.scan_iter("wave:*:*")]
-
-    if not stream_keys_bytes:
-        logger.error("Still no 'wave:*' streams found. Exiting reader task.")
-        return
-
-    logger.info(f"Found {len(stream_keys_bytes)} wave streams to listen to.")
-    
-    stream_ids = {key: '$' for key in stream_keys_bytes}
+    stream_ids = {}
+    last_scan_time = 0
+    scan_interval = 5  # Rescan every 5 seconds for new streams
 
     while True:
         try:
+            # Periodically scan for new streams
+            current_time = time.time()
+            if current_time - last_scan_time > scan_interval:
+                stream_keys_bytes = [key async for key in redis_client.scan_iter("wave:*:*")]
+                
+                # Add new streams
+                new_streams = 0
+                for key in stream_keys_bytes:
+                    if key not in stream_ids:
+                        stream_ids[key] = '$'  # Start from new messages
+                        new_streams += 1
+                
+                if new_streams > 0:
+                    logger.info(f"Found {new_streams} new streams. Total: {len(stream_ids)}")
+                elif len(stream_ids) == 0:
+                    logger.warning("No 'wave:*' streams found yet. Will retry...")
+                
+                last_scan_time = current_time
+            
+            # If no streams yet, wait and continue
+            if not stream_ids:
+                await asyncio.sleep(1)
+                continue
+            
             response = await redis_client.xread(stream_ids, count=10, block=100)
             
             if not response:
@@ -173,6 +187,11 @@ async def redis_wave_reader():
 
                 stream_key_str = stream_key.decode('utf-8')
                 _, station, channel = stream_key_str.split(":")
+                
+                # Filter: Only send Z channels to frontend (vertical component)
+                # E/N/Z are all stored in Redis for PyTorch models, but frontend only needs Z
+                if not channel.endswith('Z'):
+                    continue
 
                 for msg_id, msg_data in messages:
                     waveform_bytes = msg_data.get(b'data')
@@ -210,6 +229,11 @@ async def redis_wave_reader():
                     "timestamp": timestamp,
                     "data": wave_batch,
                 }
+                
+                # Debug: Log first batch to see what's being sent
+                if timestamp % 10000 < 1000:  # Log roughly every 10 seconds
+                    logger.info(f"Sending wave batch with {len(wave_batch)} stations: {list(wave_batch.keys())[:5]}...")
+                
                 await socket_manager.send_wave_packet(wave_packet)
 
         except Exception as e:

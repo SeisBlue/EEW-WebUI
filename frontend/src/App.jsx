@@ -217,10 +217,10 @@ function App() {
         } else if (stationData.dataPoints.length === 0) {
           stationData.displayScale = 1.0;
         }
-        
+
         // Clean up old picks
         if (stationData.picks) {
-             stationData.picks = stationData.picks.filter(p => p.time >= cutoffTime);
+          stationData.picks = stationData.picks.filter(p => p.time >= cutoffTime);
         }
 
         updated[stationCode] = stationData;
@@ -236,11 +236,11 @@ function App() {
     Object.keys(waveDataMap).forEach(stationCode => {
       const stationData = waveDataMap[stationCode];
       if (!stationData || !stationData.pgaHistory) return;
-      
+
       const maxPga30s = stationData.pgaHistory.reduce((max, item) => Math.max(max, item.pga), 0);
       const intensity = pgaToIntensity(maxPga30s);
       const color = getIntensityColor(intensity);
-      
+
       intensities[stationCode] = {
         pga: maxPga30s,
         intensity: intensity,
