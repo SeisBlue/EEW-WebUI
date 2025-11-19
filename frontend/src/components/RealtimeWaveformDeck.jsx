@@ -332,16 +332,16 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       widthMinPixels: 1
     }))
 
-      layers.push(new TextLayer({
-        id: 'grid-labels',
-        data: gridLabels,
-        getPosition: d => d.position,
-        getText: d => d.text,
-        getColor: d => d.color,
-        getSize: d => d.size,
-        getTextAnchor: 'start', // 改為靠左對齊，避免被切掉
-        fontFamily: 'monospace'
-      }))
+    layers.push(new TextLayer({
+      id: 'grid-labels',
+      data: gridLabels,
+      getPosition: d => d.position,
+      getText: d => d.text,
+      getColor: d => d.color,
+      getSize: d => d.size,
+      getTextAnchor: 'start', // 改為靠左對齊，避免被切掉
+      fontFamily: 'monospace'
+    }))
 
     return layers
   }, [minLat, maxLat, simpleLayout, panelWidth, panelHeight])
@@ -446,10 +446,7 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
   const [renderTrigger, setRenderTrigger] = useState(Date.now()) // 使用時間戳作為觸發器
   const panelRef = useRef(null)
   const animationFrameRef = useRef() // 用於保存 requestAnimationFrame 的 ID
-  const [dimensions, setDimensions] = useState({
-    width: 1200,
-    height: 800
-  })
+  const [dimensions, setDimensions] = useState(null)
 
   // --- 優化：使用 requestAnimationFrame 實現平滑滾動 ---
   useEffect(() => {
@@ -473,7 +470,7 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
       if (panelRef.current) {
         const rect = panelRef.current.getBoundingClientRect()
         setDimensions(prev => {
-          if (prev.width === rect.width && prev.height === rect.height) {
+          if (prev && prev.width === rect.width && prev.height === rect.height) {
             return prev
           }
           return {
@@ -501,19 +498,21 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
   return (
     <div className="realtime-waveform geographic">
       <div ref={panelRef} className="waveform-panel-container" style={{ flex: 1, overflow: 'hidden' }}>
-        <GeographicWavePanel
-          title={title}
-          stations={displayStations}
-          stationMap={stationMap}
-          waveDataMap={waveDataMap}
-          latMin={LAT_MIN}
-          latMax={LAT_MAX}
-          simpleLayout={false} // 壓力測試時也使用地理佈局
-          panelWidth={dimensions.width}
-          panelHeight={dimensions.height}
-          renderTrigger={renderTrigger}
-          timeWindow={timeWindow}
-        />
+        {dimensions && dimensions.width > 0 && dimensions.height > 0 && (
+          <GeographicWavePanel
+            title={title}
+            stations={displayStations}
+            stationMap={stationMap}
+            waveDataMap={waveDataMap}
+            latMin={LAT_MIN}
+            latMax={LAT_MAX}
+            simpleLayout={false} // 壓力測試時也使用地理佈局
+            panelWidth={dimensions.width}
+            panelHeight={dimensions.height}
+            renderTrigger={renderTrigger}
+            timeWindow={timeWindow}
+          />
+        )}
       </div>
     </div>
   )
