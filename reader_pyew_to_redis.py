@@ -194,8 +194,8 @@ def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
                         
                         # Only trim every 100 writes to reduce overhead
                         skip_trim_counter += 1
-                        if skip_trim_counter >= 1000:
-                            stream_trim_seconds = 60
+                        if skip_trim_counter >= 100:
+                            stream_trim_seconds = 30
                             min_id_timestamp = int((time.time() - stream_trim_seconds) * 1000)
                             try:
                                 redis_client.execute_command('XTRIM', stream_key, 'MINID', '~',

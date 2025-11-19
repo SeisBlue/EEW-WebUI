@@ -85,6 +85,10 @@ function App() {
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.event === 'wave_packet') {
+        const waveIds = Object.keys(message.data.data || {});
+        if (waveIds.length > 0) {
+          console.log(`📊 Received ${waveIds.length} waves:`, waveIds.slice(0, 5));
+        }
         setLatestWaveTime(new Date().toLocaleString('zh-TW'));
         setWavePackets(prev => [message.data, ...prev].slice(0, 10));
       } else if (message.event === 'pick_packet') {
@@ -226,6 +230,7 @@ function App() {
         updated[stationCode] = stationData;
       });
 
+      console.log(`📈 Total stations in waveDataMap: ${Object.keys(updated).length}`);
       return updated;
     });
   }, [wavePackets]);
@@ -354,10 +359,24 @@ function App() {
   }, [displayStations, allTargetStations, stationMap, waveDataMap]);
 
 
+  // Calculate stations to subscribe - memoized to prevent unnecessary re-subscriptions
+  const stationsToSubscribe = useMemo(() => {
+    if (selectionMode === 'active') {
+      return ['__ALL_Z__'];  // Fixed array, never changes
+    }
+    if (selectionMode === 'custom') {
+      return customStations;
+    }
+    if (selectionMode === 'all_site') {
+      return Object.keys(stationMap);
+    }
+    // default mode
+    return EEW_TARGETS;
+  }, [selectionMode, customStations, stationMap]);
+
   // Subscribe to WebSocket station data
   useEffect(() => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    const stationsToSubscribe = selectionMode === 'active' ? ['__ALL_Z__'] : displayStations;
     if (stationsToSubscribe.length > 0) {
       socket.send(JSON.stringify({ event: 'subscribe_stations', data: { stations: stationsToSubscribe } }));
     }
@@ -366,7 +385,7 @@ function App() {
         socket.send(JSON.stringify({ event: 'subscribe_stations', data: { stations: [] } }));
       }
     };
-  }, [socket, displayStations, selectionMode]);
+  }, [socket, stationsToSubscribe]);
 
   const handleSelectionChange = (mode, selectedStations) => {
     setSelectionMode(mode);
