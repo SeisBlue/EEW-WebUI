@@ -178,6 +178,11 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Reset box-sizing */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 a {
   font-weight: 500;
   color: var(--color-primary);

@@ -332,15 +332,16 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       widthMinPixels: 1
     }))
 
-    layers.push(new TextLayer({
-      id: 'grid-labels',
-      data: gridLabels,
-      getPosition: d => d.position,
-      getText: d => d.text,
-      getColor: d => d.color,
-      getSize: d => d.size,
-      fontFamily: 'monospace'
-    }))
+      layers.push(new TextLayer({
+        id: 'grid-labels',
+        data: gridLabels,
+        getPosition: d => d.position,
+        getText: d => d.text,
+        getColor: d => d.color,
+        getSize: d => d.size,
+        getTextAnchor: 'start', // 改為靠左對齊，避免被切掉
+        fontFamily: 'monospace'
+      }))
 
     return layers
   }, [minLat, maxLat, simpleLayout, panelWidth, panelHeight])
