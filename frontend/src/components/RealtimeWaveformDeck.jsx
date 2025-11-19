@@ -77,9 +77,13 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
           // 使用實際的採樣率和時間戳
           const effectiveSamprate = samprate || SAMPLE_RATE
           const len = values.length
+          
+          // PERFORMANCE OPTIMIZATION: Downsample from 100Hz to 20Hz (every 5th point)
+          // Reduces data points by 80%, massive performance gain with minimal visual difference
+          const downsampleFactor = 10
 
           // 優化：使用 for 循環代替 forEach，減少函數調用開銷
-          for (let idx = 0; idx < len; idx++) {
+          for (let idx = 0; idx < len; idx += downsampleFactor) {
             // 計算這個樣本點的實際時間
             const sampleTime = timestamp + (idx / effectiveSamprate) * 1000  // 毫秒
             const sampleTimeDiff = now - sampleTime

@@ -1,0 +1,52 @@
+services:
+  earthworm:
+    platform: linux/amd64
+    image: cwadayi/earthworm_ubuntu22.04_eew:v1
+    container_name: earthworm
+    ipc: shareable
+    command: bash -c "source /opt/earthworm/ew_linux.bash && startstop"
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "6379:6379"
+  reader:
+    image: seisblue/eew
+    container_name: reader
+    volumes:
+      - ./:/workspace
+    ipc: container:earthworm
+    environment:
+      - REDIS_HOST=redis
+    command: bash -c "sleep 10 && /usr/local/bin/python /workspace/reader_pyew_to_redis.py -e test"
+    restart: on-failure
+    depends_on:
+      - earthworm
+      - redis
+  backend:
+    platform: linux/amd64
+    image: seisblue/eew
+    container_name: backend
+    volumes:
+      - ./:/workspace
+    environment:
+      - REDIS_HOST=redis
+    ports:
+      - "5001:5001"
+    command: [ "/usr/local/bin/python", "/workspace/redis_fastapi_backend.py" ]
+    depends_on:
+      - redis
+      - reader
+  frontend:
+    image: seisblue/eew
+    container_name: frontend
+    volumes:
+      - ./:/workspace
+    environment:
+      - BACKEND_HOST=backend
+    working_dir: /workspace/frontend
+    ports:
+      - "3000:3000"
+    command: [ "/usr/bin/pnpm", "run", "dev", "--host" ]
+
