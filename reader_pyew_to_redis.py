@@ -29,6 +29,7 @@ import os
 from pprint import pprint
 from datetime import datetime
 import redis
+import json
 
 # ---- Configuration: edit for your environment ----
 earthworm_param = {
@@ -111,6 +112,41 @@ def parse_text_message(b):
         return ("binary", f"len={len(b)} hex-prefix={b[:64].hex()}...")
 
 
+def join_id_from_dict(data, order="NSLC"):
+    code = {"N": "network", "S": "station", "L": "location", "C": "channel"}
+    data_id = ".".join(data[code[letter]] for letter in order)
+    return data_id
+
+
+def parse_pick_msg(pick_msg):
+    pick_msg_column = pick_msg.split()
+    try:
+        pick = {
+            "station": pick_msg_column[0],
+            "channel": pick_msg_column[1],
+            "network": pick_msg_column[2],
+            "location": pick_msg_column[3],
+            "lon": pick_msg_column[4],
+            "lat": pick_msg_column[5],
+            "pga": pick_msg_column[6],
+            "pgv": pick_msg_column[7],
+            "pd": pick_msg_column[8],
+            "tc": pick_msg_column[9],  # Average period
+            "pick_time": pick_msg_column[10],
+            "weight": pick_msg_column[11],  # 0:best 5:worst
+            "instrument": pick_msg_column[12],  # 1:Acc 2:Vel
+            "update_sec": pick_msg_column[13],  # sec after pick
+        }
+
+        pick["pickid"] = join_id_from_dict(pick, order="NSLC")
+
+        return pick
+
+    except IndexError as e:
+        print(f"pick_msg parsing error: {pick_msg_column}, {e}", file=sys.stderr)
+        return None
+
+
 def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
     """
     Worker that uses EWModule to add a ring and call get_wave (which does the Trace parsing).
@@ -177,14 +213,24 @@ def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
 
 
 def worker_text_or_binary(rname, ringid, modid, instid, msg_type, poll_delay,
-                          category):
+                          category, redis_cfg):
     """
     Worker for message categories other than wave. Uses transport.copymsg_type(msg_type)
     if msg_type is provided. If msg_type is None, will attempt to call copymsg_type with
     0..255 to try catching text messages, but normally you should provide the correct msg_type.
+    Also writes received messages to Redis Stream key = category (e.g. 'pick', 'eew').
     """
     print(
         f"[{category} worker] {rname}={ringid} msg_type={msg_type} starting")
+    
+    try:
+        redis_client = redis.Redis(**redis_cfg)
+        redis_client.ping()
+        print(f"[{category} worker] {rname}={ringid} connected to Redis.")
+    except Exception as e:
+        print(f"[{category} worker] {rname}={ringid} could not connect to Redis: {e}", file=sys.stderr)
+        return
+
     t = transport(ringid, modid, instid)
     t.flush()
     try:
@@ -203,9 +249,38 @@ def worker_text_or_binary(rname, ringid, modid, instid, msg_type, poll_delay,
                     continue
                 payload = realmsg[:rlen]
                 kind, body = parse_text_message(payload)
+                
+                # Print to stdout
                 print(
                     f"{category.upper()} message from {rname} {ringid} (status={status}, rlen={rlen}, kind={kind}):")
                 print(body)
+
+                # Write to Redis Stream
+                stream_key = category
+                
+                msg_data_content = payload
+                if category == "pick":
+                    # Try to parse pick message
+                    try:
+                        text_payload = payload.decode('utf-8')
+                        parsed_pick = parse_pick_msg(text_payload)
+                        if parsed_pick:
+                            msg_data_content = json.dumps(parsed_pick)
+                    except Exception as e:
+                        print(f"[{category} worker] parse error: {e}", file=sys.stderr)
+
+                msg_data = {
+                    "data": msg_data_content,  # Redis-py handles bytes or string
+                    "recv_time": time.time()
+                }
+                
+                try:
+                    redis_client.xadd(stream_key, msg_data)
+                    # Trim stream to keep it manageable (e.g., last 1000 items)
+                    redis_client.xtrim(stream_key, maxlen=1000, approximate=True)
+                except Exception as e:
+                    print(f"[{category} worker] redis write failed: {e}", file=sys.stderr)
+
             else:
                 time.sleep(poll_delay)
     except KeyboardInterrupt:
@@ -223,10 +298,10 @@ def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
     """
     Start processes for all rings defined in a profile. Returns list of Process objects.
     profile_cfg is expected to have:
-      - inst_id
-      - wave: dict of {name: ringid}
-      - pick: dict of {name: ringid}
-      - eew: dict of {name: ringid}
+        - inst_id
+        - wave: dict of {name: ringid}
+        - pick: dict of {name: ringid}
+        - eew: dict of {name: ringid}
     """
     procs = []
     inst_id = profile_cfg.get("inst_id", 255)
@@ -235,7 +310,7 @@ def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
     # waves: for each ring defined, spawn worker_wave
     for rname, ringid in profile_cfg.get("wave", {}).items():
         p = mp.Process(target=worker_wave,
-                       args=(profile_name, ringid, mod_id, inst_id, poll_delay, redis_config))
+                        args=(profile_name, ringid, mod_id, inst_id, poll_delay, redis_config))
         p.daemon = True
         p.start()
         procs.append(p)
@@ -243,8 +318,8 @@ def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
     # picks
     for rname, ringid in profile_cfg.get("pick", {}).items():
         p = mp.Process(target=worker_text_or_binary,
-                       args=(profile_name, ringid, mod_id, inst_id,
-                             msg_type_map.get("pick"), poll_delay, "pick"))
+                        args=(profile_name, ringid, mod_id, inst_id,
+                                msg_type_map.get("pick"), poll_delay, "pick", redis_config))
         p.daemon = True
         p.start()
         procs.append(p)
@@ -252,8 +327,8 @@ def start_workers_for_profile(profile_name, profile_cfg, msg_type_map,
     # eew
     for rname, ringid in profile_cfg.get("eew", {}).items():
         p = mp.Process(target=worker_text_or_binary,
-                       args=(rname, ringid, mod_id, inst_id,
-                             msg_type_map.get("eew"), poll_delay, "eew"))
+                        args=(rname, ringid, mod_id, inst_id,
+                                msg_type_map.get("eew"), poll_delay, "eew", redis_config))
         p.daemon = True
         p.start()
         procs.append(p)

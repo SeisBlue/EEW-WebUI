@@ -10,6 +10,7 @@ from loguru import logger
 import uvicorn
 import pandas as pd
 from scipy.signal import detrend, iirfilter, sosfilt, zpk2sos
+import json
 
 # --- Redis 和 FastAPI 配置 ---
 REDIS_CONFIG = {
@@ -19,6 +20,7 @@ REDIS_CONFIG = {
 }
 
 app = FastAPI()
+background_tasks = set()
 
 # --- WebSocket 連線管理器 ---
 class ConnectionManager:
@@ -93,6 +95,22 @@ class ConnectionManager:
                     await websocket.send_json({"event": "wave_packet", "data": client_packet})
                 except Exception as e:
                     logger.error(f"Failed to send to {websocket.client.host}: {e}")
+
+    async def send_pick_packet(self, pick_data: dict):
+        """將 PICK 資料包傳送給所有連線的客戶端 (廣播)"""
+        for websocket in self.active_connections:
+            try:
+                await websocket.send_json({"event": "pick_packet", "data": pick_data})
+            except Exception as e:
+                logger.error(f"Failed to send pick to {websocket.client.host}: {e}")
+
+    async def send_eew_packet(self, eew_data: dict):
+        """將 EEW 資料包傳送給所有連線的客戶端 (廣播)"""
+        for websocket in self.active_connections:
+            try:
+                await websocket.send_json({"event": "eew_packet", "data": eew_data})
+            except Exception as e:
+                logger.error(f"Failed to send eew to {websocket.client.host}: {e}")
 
 socket_manager = ConnectionManager()
 
@@ -199,6 +217,105 @@ async def redis_wave_reader():
             await asyncio.sleep(0.1)
 
 
+async def redis_pick_reader():
+    """
+    持續從 Redis 讀取 'pick' stream，推送給 WebSocket 管理器。
+    """
+    logger.info("Starting Redis pick reader...")
+    redis_client = redis.Redis(**REDIS_CONFIG, decode_responses=False)
+    stream_key = "pick"
+    last_id = '$'
+
+    while True:
+        try:
+            # Block 100ms waiting for new messages
+            response = await redis_client.xread({stream_key: last_id}, count=10, block=100)
+            if not response:
+                continue
+
+            for _, messages in response:
+                for msg_id, msg_data in messages:
+                    last_id = msg_id
+                    # msg_data has b'data' and b'recv_time'
+                    raw_data = msg_data.get(b'data')
+                    if raw_data:
+                        try:
+                            # Try to decode as utf-8 text
+                            text_data = raw_data.decode('utf-8')
+                        except:
+                            text_data = str(raw_data)
+                        
+                        # Try to parse as JSON (if reader sent a JSON string)
+                        try:
+                            json_data = json.loads(text_data)
+                            if isinstance(json_data, dict):
+                                # It's a parsed pick object
+                                packet = {
+                                    "type": "pick",
+                                    "content": json_data,
+                                    "timestamp": time.time()
+                                }
+                            else:
+                                # It's just a string (or other JSON type)
+                                packet = {
+                                    "type": "pick",
+                                    "content": text_data,
+                                    "timestamp": time.time()
+                                }
+                        except json.JSONDecodeError:
+                            # Not JSON, treat as raw text
+                            packet = {
+                                "type": "pick",
+                                "content": text_data,
+                                "timestamp": time.time()
+                            }
+                            
+                        await socket_manager.send_pick_packet(packet)
+
+        except Exception as e:
+            # If stream doesn't exist yet, xread might fail or just return empty.
+            # If it fails because key doesn't exist, we wait.
+            # logger.error(f"Error in redis_pick_reader: {e}")
+            await asyncio.sleep(1)
+
+
+async def redis_eew_reader():
+    """
+    持續從 Redis 讀取 'eew' stream，推送給 WebSocket 管理器。
+    """
+    logger.info("Starting Redis eew reader...")
+    redis_client = redis.Redis(**REDIS_CONFIG, decode_responses=False)
+    stream_key = "eew"
+    last_id = '$'
+
+    while True:
+        try:
+            response = await redis_client.xread({stream_key: last_id}, count=10, block=100)
+            if not response:
+                continue
+
+            for _, messages in response:
+                for msg_id, msg_data in messages:
+                    last_id = msg_id
+                    raw_data = msg_data.get(b'data')
+                    if raw_data:
+                        try:
+                            text_data = raw_data.decode('utf-8')
+                        except:
+                            text_data = str(raw_data)
+                        
+                        packet = {
+                            "type": "eew",
+                            "content": text_data,
+                            "timestamp": time.time()
+                        }
+                        await socket_manager.send_eew_packet(packet)
+
+        except Exception as e:
+            # logger.error(f"Error in redis_eew_reader: {e}")
+            await asyncio.sleep(1)
+
+
 # Load site info
 site_info_file = "/workspace/station/site_info.csv"
 try:
@@ -267,7 +384,18 @@ def lowpass(data, freq=10, df=100, corners=4):
 @app.on_event("startup")
 async def startup_event():
     # 在 FastAPI 啟動時，建立背景任務
-    asyncio.create_task(redis_wave_reader())
+    for coro in [redis_wave_reader(), redis_pick_reader(), redis_eew_reader()]:
+        task = asyncio.create_task(coro)
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("Shutting down background tasks...")
+    for task in background_tasks:
+        task.cancel()
+    await asyncio.gather(*background_tasks, return_exceptions=True)
+    logger.info("Background tasks shut down.")
 
 
 if __name__ == "__main__":
