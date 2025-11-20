@@ -532,6 +532,9 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       <div className="panel-header">
         <h3>{title}</h3>
         <span className="station-count">{activeStationCount} / {stations.length} 站</span>
+        <span className="time-window-display" style={{ marginLeft: '10px', color: '#64B5F6', fontSize: '12px' }}>
+          時間窗口: {timeWindow.toFixed(1)}s
+        </span>
       </div>
       <div className="deckgl-container" style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#0a0e27' }}>
         <DeckGL
@@ -578,12 +581,17 @@ GeographicWavePanel.propTypes = {
   baseTime: PropTypes.number.isRequired
 }
 
-function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title, timeWindow, latMin, latMax }) {
+function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title, timeWindow: initialTimeWindow, latMin, latMax }) {
   const [renderTrigger, setRenderTrigger] = useState(Date.now()) // 使用時間戳作為觸發器
   const [baseTime] = useState(Date.now()) // 基準時間，組件掛載時確定
   const panelRef = useRef(null)
   const animationFrameRef = useRef(null) // 用於保存 requestAnimationFrame 的 ID
   const [dimensions, setDimensions] = useState(null)
+  
+  // 時間軸縮放狀態（可通過滾輪調整）
+  const [timeWindow, setTimeWindow] = useState(initialTimeWindow)
+  const MIN_TIME_WINDOW = 1   // 最小時間窗口：1 秒
+  const MAX_TIME_WINDOW = 30 // 最大時間窗口：30 秒
 
   // --- 優化：使用 requestAnimationFrame 實現平滑滾動 ---
   useEffect(() => {
@@ -629,6 +637,36 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
     return () => {
       window.removeEventListener('resize', updateSize)
       resizeObserver.disconnect()
+    }
+  }, [])
+
+  // 滾輪縮放時間軸
+  useEffect(() => {
+    const handleWheel = (e) => {
+      // 只在波形面板內處理滾輪事件
+      if (!panelRef.current?.contains(e.target)) return
+      
+      e.preventDefault()
+      
+      // 計算縮放因子（向上滾動縮小時間窗口，向下滾動放大時間窗口）
+      const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9
+      
+      setTimeWindow(prev => {
+        const newWindow = prev * zoomFactor
+        // 限制在最小和最大時間窗口之間
+        return Math.max(MIN_TIME_WINDOW, Math.min(MAX_TIME_WINDOW, newWindow))
+      })
+    }
+
+    const panel = panelRef.current
+    if (panel) {
+      panel.addEventListener('wheel', handleWheel, { passive: false })
+    }
+
+    return () => {
+      if (panel) {
+        panel.removeEventListener('wheel', handleWheel)
+      }
     }
   }, [])
 
