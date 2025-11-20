@@ -12,9 +12,9 @@ const LAT_MIN = 21.3 // 涵蓋整個台灣（包括離島）
 // 時間軸設定
 const SAMPLE_RATE = 100 // 100 Hz
 
-// 佈局比例常數
-const WAVE_WIDTH_RATIO = 0.7    // 波形區域寬度佔面板寬度的比例
-const X_OFFSET_RATIO = 0.15     // 左側留白佔面板寬度的比例
+// 佈局常數（使用固定像素而非比例，以確保文字不會溢出）
+const LEFT_MARGIN = 80          // 左側留白（測站代碼的顯示空間）
+const RIGHT_MARGIN = 120        // 右側留白（測站名稱和 PGA 的顯示空間）
 const BOTTOM_MARGIN = 60        // 底部留白（為時間軸預留空間）
 const TIME_AXIS_Y_OFFSET = 60   // 時間軸距離底部的距離
 
@@ -23,9 +23,9 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
   const minLat = latMin ?? LAT_MIN
   const maxLat = latMax ?? LAT_MAX
 
-  // 提取公共常量（使用全局定義的比例常數）
-  const waveWidth = panelWidth * WAVE_WIDTH_RATIO
-  const xOffset = panelWidth * X_OFFSET_RATIO
+  // 計算佈局尺寸（使用固定邊界，波形寬度自動適應）
+  const xOffset = LEFT_MARGIN
+  const waveWidth = Math.max(100, panelWidth - LEFT_MARGIN - RIGHT_MARGIN) // 至少保留 100px 給波形
 
   // 計算波形路徑數據（使用 PathLayer）- 優化版本
   const waveformLayers = useMemo(() => {
