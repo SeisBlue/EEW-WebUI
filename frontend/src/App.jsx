@@ -28,8 +28,9 @@ const EEW_TARGETS = [
 function App() {
   // View and selection state
   const [view, setView] = useState('waveform'); // 'waveform' or 'stationSelection'
-  const [selectionMode, setSelectionMode] = useState('default'); // 'default', 'active', 'all_site', 'custom'
+  const [selectionMode, setSelectionMode] = useState('active'); // 'target', 'active', 'all_site', 'custom'
   const [customStations, setCustomStations] = useState([]);
+  const [selectedItem, setSelectedItem] = useState(null); // For both reports and events
 
   // WebSocket and data state
   const [isConnected, setIsConnected] = useState(false);
@@ -365,7 +366,7 @@ function App() {
         return Object.keys(stationMap).sort((a, b) => (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0));
       case 'custom':
         return customStations;
-      case 'default':
+      case 'target':
       default:
         return EEW_TARGETS;
     }
@@ -410,17 +411,17 @@ function App() {
 
   // Calculate stations to subscribe - memoized to prevent unnecessary re-subscriptions
   const stationsToSubscribe = useMemo(() => {
-    if (selectionMode === 'active') {
-      return ['__ALL_Z__'];  // Fixed array, never changes
+    switch (selectionMode) {
+      case 'active':
+        return ['__ALL_Z__'];
+      case 'custom':
+        return customStations;
+      case 'all_site':
+        return Object.keys(stationMap);
+      case 'target':
+      default:
+        return EEW_TARGETS;
     }
-    if (selectionMode === 'custom') {
-      return customStations;
-    }
-    if (selectionMode === 'all_site') {
-      return Object.keys(stationMap);
-    }
-    // default mode
-    return EEW_TARGETS;
   }, [selectionMode, customStations, stationMap]);
 
   // Subscribe to WebSocket station data
@@ -468,10 +469,22 @@ function App() {
         return `所有測站清單 (${count} 站)`;
       case 'custom':
         return `自訂測站列表 (${count} 站)`;
+      case 'target':
       default:
         return `全台 PWS 參考點 - ${count} 站`;
     }
   }, [selectionMode, displayStations.length]);
+
+  // Dummy data
+  const reports = [
+    { id: 'rep-1', title: '預警報告 #1', content: '這是預警報告 #1 的詳細內容。' },
+    { id: 'rep-2', title: '預警報告 #2', content: '這是預警報告 #2 的詳細內容。' },
+  ];
+  const events = [
+    { id: 'evt-1', title: '地震事件 A', content: '這是地震事件 A 的詳細內容。' },
+    { id: 'evt-2', title: '地震事件 B', content: '這是地震事件 B 的詳細內容。' },
+  ];
+
 
   return (
     <div className="app">
@@ -497,50 +510,106 @@ function App() {
       </header>
 
       <div className="dashboard">
+        {/* Left Panel: Report and Event Lists */}
         <div className="left-panel">
-          <section className="section report-section">
-          </section>
-        </div>
-        <div className="mid-panel">
-          <section className="section map-section">
+          <section className="section report-list-section">
             <div className="section-header">
-              <h2>測站分布</h2>
-              <button
-                className="select-station-button"
-                onClick={() => setView(prev => prev === 'waveform' ? 'stationSelection' : 'waveform')}
-              >
-                {view === 'waveform' ? '選擇顯示測站' : '返回波形圖'}
-              </button>
+              <h2>預警報告列表</h2>
             </div>
-            <TaiwanMap
-              stations={mapDisplayStations}
-              stationIntensities={stationIntensities}
-              waveDataMap={waveDataMap}
-              onBoundsChange={handleMapBoundsChange}
-            />
+            <ul className="report-list">
+              {reports.map(report => (
+                <li
+                  key={report.id}
+                  className={`report-list-item ${selectedItem?.id === report.id ? 'selected' : ''}`}
+                  onClick={() => setSelectedItem(report)}
+                >
+                  {report.title}
+                </li>
+              ))}
+            </ul>
+          </section>
+          <section className="section event-list-section">
+            <div className="section-header">
+              <h2>地震事件</h2>
+            </div>
+            <ul className="report-list">
+              {events.map(event => (
+                <li
+                  key={event.id}
+                  className={`report-list-item ${selectedItem?.id === event.id ? 'selected' : ''}`}
+                  onClick={() => setSelectedItem(event)}
+                >
+                  {event.title}
+                </li>
+              ))}
+            </ul>
           </section>
         </div>
-        <div className="right-panel">
-          {view === 'waveform' ? (
-            <RealtimeWaveformDeck
-              waveDataMap={waveDataMap}
-              displayStations={displayStations}
-              stationMap={stationMap}
-              title={waveformTitle}
-              timeWindow={DEFAULT_DISPLAY_WINDOW}
-              onTimeWindowChange={handleDisplayTimeWindowChange}
-              latMin={mapBounds?.minLat}
-              latMax={mapBounds?.maxLat}
-            />
-          ) : (
-            <StationSelection
-              allStations={stationMap}
-              activeStations={displayStations}
-              selectionMode={selectionMode}
-              onSelectionChange={handleSelectionChange}
-              onViewChange={setView}
-            />
-          )}
+
+        {/* Middle Panel: Map and Waveforms */}
+        <div className="main-content">
+          <div className="mid-panel">
+            <section className="section map-section">
+              <div className="section-header">
+                <h2>測站分布</h2>
+                <button
+                  className="select-station-button"
+                  onClick={() => setView(prev => prev === 'waveform' ? 'stationSelection' : 'waveform')}
+                >
+                  {view === 'waveform' ? '選擇顯示測站' : '返回波形圖'}
+                </button>
+              </div>
+              <TaiwanMap
+                stations={mapDisplayStations}
+                stationIntensities={stationIntensities}
+                waveDataMap={waveDataMap}
+                onBoundsChange={handleMapBoundsChange}
+              />
+            </section>
+          </div>
+          <div className="right-panel">
+            {view === 'waveform' ? (
+              <RealtimeWaveformDeck
+                waveDataMap={waveDataMap}
+                displayStations={displayStations}
+                stationMap={stationMap}
+                title={waveformTitle}
+                timeWindow={DEFAULT_DISPLAY_WINDOW}
+                onTimeWindowChange={handleDisplayTimeWindowChange}
+                latMin={mapBounds?.minLat}
+                latMax={mapBounds?.maxLat}
+              />
+            ) : (
+              <StationSelection
+                allStations={stationMap}
+                activeStations={displayStations}
+                selectionMode={selectionMode}
+                onSelectionChange={handleSelectionChange}
+                onViewChange={setView}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Right Panel: Shared Detail View */}
+        <div className="report-detail-panel">
+          <section className="section report-detail-section">
+            <div className="section-header">
+              <h2>詳細資料</h2>
+            </div>
+            <div className="report-detail-content">
+              {selectedItem ? (
+                <div>
+                  <h3>{selectedItem.title}</h3>
+                  <p>{selectedItem.content}</p>
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <p>請從左側列表選擇一個項目以查看詳細資料。</p>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       </div>
     </div>

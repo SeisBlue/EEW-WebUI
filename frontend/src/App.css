@@ -24,6 +24,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--spacing-sm);
+  position: relative;
+  z-index: 10;
 }
 
 .header-left,
@@ -100,6 +102,13 @@
   gap: var(--spacing-sm);
   background: var(--color-bg-dark);
   border-right: 1px solid var(--color-border-base);
+  overflow-y: auto;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  min-width: 0;
 }
 
 .mid-panel {
@@ -122,18 +131,27 @@
   flex-direction: column;
 }
 
+.report-detail-panel {
+  flex: 0 0 350px; /* 預測資料面板寬度 */
+  padding: var(--spacing-sm);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-dark);
+  border-left: 1px solid var(--color-border-base);
+}
+
 .section {
   background: var(--color-bg-panel);
   border-radius: var(--radius-lg);
   padding: var(--spacing-sm);
   border: 1px solid var(--color-border-base);
   width: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .map-section {
   flex: 1;
-  display: flex;
-  flex-direction: column;
   min-height: 300px;
   position: relative;
   overflow: hidden;
@@ -144,6 +162,7 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: var(--spacing-sm);
+  flex-shrink: 0;
 }
 
 .section h2 {
@@ -192,4 +211,66 @@
   overflow: hidden;
   position: relative;
   border-radius: var(--radius-lg);
+}
+
+/* ============================================
+   報告與事件列表
+   ============================================ */
+.report-list-section,
+.event-list-section {
+  flex: 1; /* 平均分配空間 */
+  min-height: 0; /* 允許 flex item 縮小 */
+  overflow: hidden;
+}
+
+.report-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.report-list-item {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+  border-bottom: 1px solid var(--color-border-base);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.report-list-item:hover {
+  background-color: var(--color-bg-glass-hover);
+}
+
+.report-list-item.selected {
+  background-color: var(--color-primary-bg);
+  color: var(--color-primary-light);
+  font-weight: 600;
+}
+
+/* ============================================
+   詳細資料面板
+   ============================================ */
+.report-detail-section {
+  flex: 1;
+  overflow: hidden;
+}
+
+.report-detail-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-sm);
+}
+
+.report-detail-content .empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-text-muted);
+  text-align: center;
 }
