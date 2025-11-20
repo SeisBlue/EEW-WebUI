@@ -1,10 +1,15 @@
-import { useState, useEffect, useMemo } from 'react';
+import {useState, useEffect, useMemo} from 'react';
 import './App.css';
 import Papa from 'papaparse';
 import TaiwanMap from './components/TaiwanMapDeck';
 import RealtimeWaveformDeck from './components/RealtimeWaveformDeck';
 import StationSelection from './components/StationSelection.jsx';
-import { getIntensityColor, pgaToIntensity, extractStationCode, parseEarthwormTime } from './utils';
+import {
+  getIntensityColor,
+  pgaToIntensity,
+  extractStationCode,
+  parseEarthwormTime
+} from './utils';
 
 const DATA_RETENTION_WINDOW = 120;  // 資料暫存時間窗口（秒）- 用於保留歷史資料
 const DEFAULT_DISPLAY_WINDOW = 120;   // 預設顯示時間窗口（秒）
@@ -48,9 +53,16 @@ function App() {
       download: true, header: true, skipEmptyLines: true,
       complete: (results) => {
         const stations = results.data.map(s => ({
-          network: s.network, county: s.county, station: s.station, station_zh: s.station_zh,
-          longitude: parseFloat(s.longitude), latitude: parseFloat(s.latitude), elevation: parseFloat(s.elevation),
-          status: 'unknown', lastSeen: null, pga: null,
+          network: s.network,
+          county: s.county,
+          station: s.station,
+          station_zh: s.station_zh,
+          longitude: parseFloat(s.longitude),
+          latitude: parseFloat(s.latitude),
+          elevation: parseFloat(s.elevation),
+          status: 'unknown',
+          lastSeen: null,
+          pga: null,
         }));
         setAllTargetStations(stations);
         console.log('📍 [App] Loaded', stations.length, 'target stations from eew_target.csv');
@@ -83,8 +95,16 @@ function App() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
     const ws = new WebSocket(wsUrl);
-    ws.onopen = () => { console.log('✅ [App] Connected'); setIsConnected(true); setSocket(ws); };
-    ws.onclose = () => { console.log('❌ [App] Disconnected'); setIsConnected(false); setSocket(null); };
+    ws.onopen = () => {
+      console.log('✅ [App] Connected');
+      setIsConnected(true);
+      setSocket(ws);
+    };
+    ws.onclose = () => {
+      console.log('❌ [App] Disconnected');
+      setIsConnected(false);
+      setSocket(null);
+    };
     ws.onerror = (error) => console.error('❌ [App] WebSocket Error:', error);
 
     ws.onmessage = (event) => {
@@ -102,7 +122,9 @@ function App() {
       }
     };
 
-    return () => { if (ws.readyState === WebSocket.OPEN) ws.close(); };
+    return () => {
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+    };
   }, []);
 
   // Process new wave packets
@@ -112,19 +134,31 @@ function App() {
     const latestPacket = wavePackets[0];
 
     setWaveDataMap(prev => {
-      const updated = { ...prev };
+      const updated = {...prev};
       const now = Date.now();
 
       if (latestPacket.data) {
         Object.keys(latestPacket.data).forEach(seedStation => {
           const stationCode = extractStationCode(seedStation);
           const wavePacketData = latestPacket.data[seedStation];
-          const { pga = 0, startt, endt, samprate = 100, waveform = [] } = wavePacketData;
+          const {
+            pga = 0,
+            startt,
+            endt,
+            samprate = 100,
+            waveform = []
+          } = wavePacketData;
 
           const prevStationData = updated[stationCode] || {
-            dataPoints: [], pgaHistory: [], lastPga: 0, lastEndTime: null,
+            dataPoints: [],
+            pgaHistory: [],
+            lastPga: 0,
+            lastEndTime: null,
             recentStats: {
-              points: [], totalSumSquares: 0, totalMaxAbs: 0, totalCount: 0
+              points: [],
+              totalSumSquares: 0,
+              totalMaxAbs: 0,
+              totalCount: 0
             }
           };
           const stationData = {
@@ -171,7 +205,7 @@ function App() {
             stationData.lastEndTime = endt;
           }
 
-          stationData.pgaHistory.push({ timestamp: now, pga: pga });
+          stationData.pgaHistory.push({timestamp: now, pga: pga});
           stationData.lastPga = pga;
 
           if (waveform.length > 0) {
@@ -274,17 +308,22 @@ function App() {
     if (!pickData || !pickData.station || !pickData.pick_time) return;
 
     setWaveDataMap(prev => {
-      const updated = { ...prev };
+      const updated = {...prev};
       const stationCode = pickData.station;
 
       // Ensure station data exists
       const prevStationData = updated[stationCode] || {
         dataPoints: [], pgaHistory: [], lastPga: 0, lastEndTime: null,
-        recentStats: { points: [], totalSumSquares: 0, totalMaxAbs: 0, totalCount: 0 },
+        recentStats: {
+          points: [],
+          totalSumSquares: 0,
+          totalMaxAbs: 0,
+          totalCount: 0
+        },
         picks: []
       };
 
-      const stationData = { ...prevStationData };
+      const stationData = {...prevStationData};
 
       // Ensure picks array exists and is copied
       if (!stationData.picks) {
@@ -388,11 +427,17 @@ function App() {
   useEffect(() => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     if (stationsToSubscribe.length > 0) {
-      socket.send(JSON.stringify({ event: 'subscribe_stations', data: { stations: stationsToSubscribe } }));
+      socket.send(JSON.stringify({
+        event: 'subscribe_stations',
+        data: {stations: stationsToSubscribe}
+      }));
     }
     return () => {
       if (socket?.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ event: 'subscribe_stations', data: { stations: [] } }));
+        socket.send(JSON.stringify({
+          event: 'subscribe_stations',
+          data: {stations: []}
+        }));
       }
     };
   }, [socket, stationsToSubscribe]);
@@ -417,10 +462,14 @@ function App() {
   const waveformTitle = useMemo(() => {
     const count = displayStations.length;
     switch (selectionMode) {
-      case 'active': return `即時訊號測站 (${count} 站)`;
-      case 'all_site': return `所有測站清單 (${count} 站)`;
-      case 'custom': return `自訂測站列表 (${count} 站)`;
-      default: return `全台 PWS 參考點 - ${count} 站`;
+      case 'active':
+        return `即時訊號測站 (${count} 站)`;
+      case 'all_site':
+        return `所有測站清單 (${count} 站)`;
+      case 'custom':
+        return `自訂測站列表 (${count} 站)`;
+      default:
+        return `全台 PWS 參考點 - ${count} 站`;
     }
   }, [selectionMode, displayStations.length]);
 
@@ -429,21 +478,30 @@ function App() {
       <header className="app-header">
         <div className="header-left">
           <h1 className="app-title">AI 地震預警即時監控面板</h1>
-          <div className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
+          <div
+            className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
             {isConnected ? '🟢 已連接' : '🔴 未連接'}
           </div>
         </div>
         <div className="header-right">
           {latestWaveTime ? (
-            <div className="wave-status-compact active"><span className="wave-icon">🌊</span><span className="wave-text">{latestWaveTime}</span></div>
+            <div className="wave-status-compact active"><span
+              className="wave-icon">🌊</span><span
+              className="wave-text">{latestWaveTime}</span></div>
           ) : (
-            <div className="wave-status-compact waiting"><span className="wave-icon">⏳</span><span className="wave-text">等待波形</span></div>
+            <div className="wave-status-compact waiting"><span
+              className="wave-icon">⏳</span><span
+              className="wave-text">等待波形</span></div>
           )}
         </div>
       </header>
 
       <div className="dashboard">
         <div className="left-panel">
+          <section className="section report-section">
+          </section>
+        </div>
+        <div className="mid-panel">
           <section className="section map-section">
             <div className="section-header">
               <h2>測站分布</h2>
@@ -462,7 +520,6 @@ function App() {
             />
           </section>
         </div>
-
         <div className="right-panel">
           {view === 'waveform' ? (
             <RealtimeWaveformDeck
@@ -487,7 +544,8 @@ function App() {
         </div>
       </div>
     </div>
-  );
+  )
+    ;
 }
 
 export default App;

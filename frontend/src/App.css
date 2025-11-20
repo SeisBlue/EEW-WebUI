@@ -102,6 +102,16 @@
   border-right: 1px solid var(--color-border-base);
 }
 
+.mid-panel {
+  flex: 0 0 var(--mid-panel-width);
+  padding: var(--spacing-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  background: var(--color-bg-dark);
+  border-right: 1px solid var(--color-border-base);
+}
+
 .right-panel {
   flex: 1;
   height: 100%;

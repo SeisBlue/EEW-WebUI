@@ -158,8 +158,11 @@
   --breakpoint-desktop: 1440px;
 
   /* 左側面板寬度 */
-  --left-panel-width: 700px;
-  --left-panel-width-tablet: 350px;
+  --left-panel-width: 300px;
+
+  /* 左側面板寬度 */
+  --mid-panel-width: 600px;
+  --mid-panel-width-tablet: 350px;
 
   /* 捲軸 */
   --scrollbar-thumb: color-mix(in srgb, var(--white) 20%, transparent);
