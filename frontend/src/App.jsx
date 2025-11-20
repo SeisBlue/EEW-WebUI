@@ -6,7 +6,8 @@ import RealtimeWaveformDeck from './components/RealtimeWaveformDeck';
 import StationSelection from './components/StationSelection.jsx';
 import { getIntensityColor, pgaToIntensity, extractStationCode, parseEarthwormTime } from './utils';
 
-const TIME_WINDOW = 30;
+const DATA_RETENTION_WINDOW = 300;  // 資料暫存時間窗口（秒）- 用於保留歷史資料
+const DEFAULT_DISPLAY_WINDOW = 30;   // 預設顯示時間窗口（秒）
 // 所有測站列表 - 按緯度排列顯示
 const EEW_TARGETS = [
   'NOU', 'TIPB', 'ILA', 'TWC', 'ENT',
@@ -37,6 +38,9 @@ function App() {
   const [allTargetStations, setAllTargetStations] = useState([]); // All stations from eew_target.csv
   const [stationMap, setStationMap] = useState({});
   const [mapBounds, setMapBounds] = useState(null); // 地圖的緯度邊界
+
+  // Display time window state - 與波形縮放聯動
+  const [displayTimeWindow, setDisplayTimeWindow] = useState(DEFAULT_DISPLAY_WINDOW);
 
   // Load initial station metadata
   useEffect(() => {
@@ -190,7 +194,7 @@ function App() {
         });
       }
 
-      const cutoffTime = now - TIME_WINDOW * 1000;
+      const cutoffTime = now - DATA_RETENTION_WINDOW * 1000;  // 使用資料暫存窗口
       const recentCutoff = now - 10 * 1000;
 
       Object.keys(updated).forEach(stationCode => {
@@ -243,18 +247,23 @@ function App() {
       const stationData = waveDataMap[stationCode];
       if (!stationData || !stationData.pgaHistory) return;
 
-      const maxPga30s = stationData.pgaHistory.reduce((max, item) => Math.max(max, item.pga), 0);
-      const intensity = pgaToIntensity(maxPga30s);
+      // 計算顯示窗口內的最大 PGA（使用當前 displayTimeWindow）
+      const now = Date.now();
+      const displayCutoff = now - displayTimeWindow * 1000;
+      const maxPga = stationData.pgaHistory
+        .filter(item => item.timestamp >= displayCutoff)
+        .reduce((max, item) => Math.max(max, item.pga), 0);
+      const intensity = pgaToIntensity(maxPga);
       const color = getIntensityColor(intensity);
 
       intensities[stationCode] = {
-        pga: maxPga30s,
+        pga: maxPga,
         intensity: intensity,
         color: color
       };
     });
     return intensities;
-  }, [waveDataMap]);
+  }, [waveDataMap, displayTimeWindow]);  // 加入 displayTimeWindow 依賴
 
   // Process new pick packets
   useEffect(() => {
@@ -298,7 +307,7 @@ function App() {
 
         // Clean up old picks
         const now = Date.now();
-        const cutoff = now - TIME_WINDOW * 1000;
+        const cutoff = now - DATA_RETENTION_WINDOW * 1000;  // 使用資料暫存窗口
         stationData.picks = stationData.picks.filter(p => p.time >= cutoff);
       }
 
@@ -401,6 +410,10 @@ function App() {
     setMapBounds(bounds);
   };
 
+  const handleDisplayTimeWindowChange = (newTimeWindow) => {
+    setDisplayTimeWindow(newTimeWindow);
+  };
+
   const waveformTitle = useMemo(() => {
     const count = displayStations.length;
     switch (selectionMode) {
@@ -457,7 +470,8 @@ function App() {
               displayStations={displayStations}
               stationMap={stationMap}
               title={waveformTitle}
-              timeWindow={TIME_WINDOW}
+              timeWindow={DEFAULT_DISPLAY_WINDOW}
+              onTimeWindowChange={handleDisplayTimeWindowChange}
               latMin={mapBounds?.minLat}
               latMax={mapBounds?.maxLat}
             />

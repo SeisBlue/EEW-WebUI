@@ -114,9 +114,16 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
           const effectiveSamprate = samprate || SAMPLE_RATE
           const len = values.length
 
-          // PERFORMANCE OPTIMIZATION: Downsample from 100Hz to 20Hz (every 5th point)
-          // Reduces data points by 80%, massive performance gain with minimal visual difference
-          const downsampleFactor = 20
+          // 動態降採樣：根據時間窗口和波形寬度自動調整
+          // 目標：保持每像素約 0.5 - 1 個數據點，避免過度繪製
+          // waveWidth 像素對應 timeWindow 秒，每秒 SAMPLE_RATE 個點
+          // 總點數 = timeWindow * effectiveSamprate
+          // 理想點數 = waveWidth * 1.0
+          // downsampleFactor = 總點數 / 理想點數
+          const totalPoints = timeWindow * effectiveSamprate
+          const targetPoints = waveWidth * 0.5 // 稍微降低密度以提升性能
+          const calculatedFactor = Math.floor(totalPoints / targetPoints)
+          const downsampleFactor = Math.max(1, calculatedFactor)
 
           // 優化：使用 for 循環代替 forEach，減少函數調用開銷
           for (let idx = 0; idx < len; idx += downsampleFactor) {
@@ -581,7 +588,7 @@ GeographicWavePanel.propTypes = {
   baseTime: PropTypes.number.isRequired
 }
 
-function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title, timeWindow: initialTimeWindow, latMin, latMax }) {
+function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title, timeWindow: initialTimeWindow, onTimeWindowChange, latMin, latMax }) {
   const [renderTrigger, setRenderTrigger] = useState(Date.now()) // 使用時間戳作為觸發器
   const [baseTime] = useState(Date.now()) // 基準時間，組件掛載時確定
   const panelRef = useRef(null)
@@ -591,7 +598,7 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
   // 時間軸縮放狀態（可通過滾輪調整）
   const [timeWindow, setTimeWindow] = useState(initialTimeWindow)
   const MIN_TIME_WINDOW = 1   // 最小時間窗口：1 秒
-  const MAX_TIME_WINDOW = 30 // 最大時間窗口：30 秒
+  const MAX_TIME_WINDOW = 300 // 最大時間窗口：300 秒
 
   // --- 優化：使用 requestAnimationFrame 實現平滑滾動 ---
   useEffect(() => {
@@ -654,7 +661,15 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
       setTimeWindow(prev => {
         const newWindow = prev * zoomFactor
         // 限制在最小和最大時間窗口之間
-        return Math.max(MIN_TIME_WINDOW, Math.min(MAX_TIME_WINDOW, newWindow))
+        const clamped = Math.max(MIN_TIME_WINDOW, Math.min(MAX_TIME_WINDOW, newWindow))
+        
+        // 通知父組件更新
+        if (onTimeWindowChange) {
+          // 使用 debounce 或直接調用，這裡直接調用因為頻率不高
+          onTimeWindowChange(clamped)
+        }
+        
+        return clamped
       })
     }
 
@@ -702,6 +717,7 @@ RealtimeWaveformDeck.propTypes = {
   timeWindow: PropTypes.number.isRequired,
   latMin: PropTypes.number,  // 可選：地圖的最小緯度
   latMax: PropTypes.number,  // 可選：地圖的最大緯度
+  onTimeWindowChange: PropTypes.func // 可選：時間窗口改變回調
 }
 
 export default RealtimeWaveformDeck
