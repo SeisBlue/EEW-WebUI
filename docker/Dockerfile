@@ -24,7 +24,7 @@ RUN mkdir -p /opt/earthworm /opt/earthworm/run/params /opt/earthworm/run/logs &&
     tar -xzf earthworm_8.0b1-ubuntu24.04-bin.tar.gz -C /opt/earthworm && \
     rm earthworm_8.0b1-ubuntu24.04-bin.tar.gz
 
-COPY pick_eew /opt/earthworm/earthworm_8.0/bin/
+COPY docker/pick_eew /opt/earthworm/earthworm_8.0/bin/
 
 # Install PyEarthworm
 ENV EW_VERSION="8.0"
