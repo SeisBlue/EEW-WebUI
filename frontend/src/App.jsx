@@ -36,6 +36,7 @@ function App() {
   // Station and map state
   const [allTargetStations, setAllTargetStations] = useState([]); // All stations from eew_target.csv
   const [stationMap, setStationMap] = useState({});
+  const [mapBounds, setMapBounds] = useState(null); // 地圖的緯度邊界
 
   // Load initial station metadata
   useEffect(() => {
@@ -396,6 +397,10 @@ function App() {
     setWaveDataMap({});
   };
 
+  const handleMapBoundsChange = (bounds) => {
+    setMapBounds(bounds);
+  };
+
   const waveformTitle = useMemo(() => {
     const count = displayStations.length;
     switch (selectionMode) {
@@ -440,6 +445,7 @@ function App() {
               stations={mapDisplayStations}
               stationIntensities={stationIntensities}
               waveDataMap={waveDataMap}
+              onBoundsChange={handleMapBoundsChange}
             />
           </section>
         </div>
@@ -452,6 +458,8 @@ function App() {
               stationMap={stationMap}
               title={waveformTitle}
               timeWindow={TIME_WINDOW}
+              latMin={mapBounds?.minLat}
+              latMax={mapBounds?.maxLat}
             />
           ) : (
             <StationSelection

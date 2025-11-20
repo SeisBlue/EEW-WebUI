@@ -577,7 +577,7 @@ GeographicWavePanel.propTypes = {
   baseTime: PropTypes.number.isRequired
 }
 
-function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title, timeWindow }) {
+function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title, timeWindow, latMin, latMax }) {
   const [renderTrigger, setRenderTrigger] = useState(Date.now()) // 使用時間戳作為觸發器
   const [baseTime] = useState(Date.now()) // 基準時間，組件掛載時確定
   const panelRef = useRef(null)
@@ -640,8 +640,8 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
             stations={displayStations}
             stationMap={stationMap}
             waveDataMap={waveDataMap}
-            latMin={LAT_MIN}
-            latMax={LAT_MAX}
+            latMin={latMin ?? LAT_MIN}
+            latMax={latMax ?? LAT_MAX}
             panelWidth={dimensions.width}
             panelHeight={dimensions.height}
 
@@ -661,6 +661,8 @@ RealtimeWaveformDeck.propTypes = {
   stationMap: PropTypes.object.isRequired,
   title: PropTypes.string.isRequired,
   timeWindow: PropTypes.number.isRequired,
+  latMin: PropTypes.number,  // 可選：地圖的最小緯度
+  latMax: PropTypes.number,  // 可選：地圖的最大緯度
 }
 
 export default RealtimeWaveformDeck
