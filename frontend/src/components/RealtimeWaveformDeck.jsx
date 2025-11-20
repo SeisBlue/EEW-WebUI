@@ -598,7 +598,7 @@ function RealtimeWaveformDeck({ waveDataMap, displayStations, stationMap, title,
   // 時間軸縮放狀態（可通過滾輪調整）
   const [timeWindow, setTimeWindow] = useState(initialTimeWindow)
   const MIN_TIME_WINDOW = 1   // 最小時間窗口：1 秒
-  const MAX_TIME_WINDOW = 300 // 最大時間窗口：300 秒
+  const MAX_TIME_WINDOW = 120 // 最大時間窗口：120 秒
 
   // --- 優化：使用 requestAnimationFrame 實現平滑滾動 ---
   useEffect(() => {

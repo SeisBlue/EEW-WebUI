@@ -6,8 +6,8 @@ import RealtimeWaveformDeck from './components/RealtimeWaveformDeck';
 import StationSelection from './components/StationSelection.jsx';
 import { getIntensityColor, pgaToIntensity, extractStationCode, parseEarthwormTime } from './utils';
 
-const DATA_RETENTION_WINDOW = 300;  // 資料暫存時間窗口（秒）- 用於保留歷史資料
-const DEFAULT_DISPLAY_WINDOW = 30;   // 預設顯示時間窗口（秒）
+const DATA_RETENTION_WINDOW = 120;  // 資料暫存時間窗口（秒）- 用於保留歷史資料
+const DEFAULT_DISPLAY_WINDOW = 120;   // 預設顯示時間窗口（秒）
 // 所有測站列表 - 按緯度排列顯示
 const EEW_TARGETS = [
   'NOU', 'TIPB', 'ILA', 'TWC', 'ENT',
