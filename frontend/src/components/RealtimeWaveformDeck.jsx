@@ -73,22 +73,21 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
         const pga = waveData.lastPga || 0
         const intensityStr = pgaToIntensity(pga)
         const intensityValue = getIntensityValue(intensityStr)
-
-        // 根據震度和 pick 決定顏色和寬度
-        let waveColor
-        let lineWidth  // 改名為 lineWidth 避免與外部 waveWidth 衝突
         const hasPicks = waveData.picks && waveData.picks.length > 0
 
-        if (intensityValue >= 4) {
-          // 4 級以上：正常綠色
-          waveColor = [76, 175, 80, 230]
-        } else {
-          // 0-3 級：調淡 (降低 alpha)
-          waveColor = [76, 175, 80, 70]
-        }
+        // **MODIFIED**: Combine style logic
+        let waveColor;
+        let lineWidth;
 
-        // 有 pick 的波形調粗
-        lineWidth = hasPicks ? 2.0 : 1.2
+        if (hasPicks || intensityValue >= 4) {
+          // If has pick OR intensity is 4+, use normal color and thick line
+          waveColor = [76, 175, 80, 230]; // Opaque green
+          lineWidth = 1.0;
+        } else {
+          // Otherwise, use dimmed color and normal line
+          waveColor = [76, 175, 80, 70]; // Transparent green
+          lineWidth = 0.5;
+        }
 
         waveData.dataPoints.forEach(point => {
           const { timestamp, endTimestamp, values, samprate, isGap } = point
@@ -278,37 +277,58 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       centerY = ((maxLat - station.latitude) / (maxLat - minLat)) * availableHeight
 
       const waveData = waveDataMap[stationCode]
+      const hasPicks = waveData?.picks?.length > 0;
+      const intensityValue = getIntensityValue(pgaToIntensity(waveData?.lastPga || 0));
 
-      // 計算震度等級來決定文字顏色和位置
-      let textAlpha = 255 // 預設完全不透明
-      let stationLabelOffset = -10  // 測站代碼的 X offset
-      let pgaLabelOffset = 5        // PGA 的 X offset
+      // Default styles
+      let textAlpha = 255
+      let stationLabelOffset = -10
+      let pgaLabelOffset = 5
+      let labelColor = waveData ? [224, 224, 224, 255] : [102, 102, 102, 255];
+      let labelBackgroundColor = [0, 0, 0, 0];
+      let labelPadding = [0, 0, 0, 0];
+      let labelBorderRadius = 0;
+      let labelFontWeight = 'normal';
 
-      if (waveData?.lastPga !== undefined) {
-        const pga = waveData.lastPga
-        const intensityStr = pgaToIntensity(pga)
-        const intensityValue = getIntensityValue(intensityStr)
-
-        if (intensityValue < 2) {
-          textAlpha = 50  // 0 級：alpha 80
-        } else if (intensityValue < 3) {
-          textAlpha = 100  // 1-2 級：alpha 70
-        } else {
-          textAlpha = 255 // 3 級以上：正常顏色
-          // 4 級以上：文字位置往外挪
-          stationLabelOffset = -40
-          pgaLabelOffset = 60
-        }
+      // 1. Determine push-out state
+      if (hasPicks || intensityValue >= 4) {
+          stationLabelOffset = -40;
+          pgaLabelOffset = 60;
       }
+
+      // 2. Determine text transparency (alpha)
+      if (intensityValue < 2 && !hasPicks) {
+          textAlpha = 50;
+      } else if (intensityValue < 3 && !hasPicks) {
+          textAlpha = 100;
+      } else {
+          textAlpha = 255;
+      }
+      
+      // 3. Apply special styles for picked stations (overrides some defaults)
+      if (hasPicks) {
+        labelColor = [255, 235, 59, 255]; // Yellow
+        labelBackgroundColor = [0, 0, 0, 255]; // Black
+        labelPadding = [2, 5, 2, 5];
+        labelBorderRadius = 4;
+        labelFontWeight = 'bold';
+      }
+      
+      // 4. Apply final alpha to the text color
+      labelColor[3] = textAlpha;
 
       // 測站代碼標籤
       labels.push({
         position: [xOffset + stationLabelOffset, centerY],
         text: stationCode,
-        color: waveData ? [224, 224, 224, textAlpha] : [102, 102, 102, 255],
+        color: labelColor,
+        backgroundColor: labelBackgroundColor,
+        padding: labelPadding,
+        borderRadius: labelBorderRadius,
+        fontWeight: labelFontWeight,
         size: 10,
         anchor: 'end',
-        alignmentBaseline: 'center'
+        alignmentBaseline: 'center',
       })
 
       // 測站中文名稱
@@ -380,10 +400,16 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       getSize: d => d.size,
       getTextAnchor: d => d.anchor,
       getAlignmentBaseline: d => d.alignmentBaseline,
+      // **ADDED**: Accessors for new properties
+      getBackgroundColor: d => d.backgroundColor,
+      getBorderRadius: d => d.borderRadius,
+      getPadding: d => d.padding,
+      getFontWeight: d => d.fontWeight,
       fontFamily: 'monospace',
-      fontWeight: 'normal',
       updateTriggers: {
         getColor: waveDataMap,
+        getBackgroundColor: waveDataMap,
+        getPosition: waveDataMap,
         getText: [waveDataMap, renderTrigger] // 添加 renderTrigger 以更新時間顯示
       }
     })]
@@ -406,7 +432,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       if (lat % 1 === 0) {
         gridLabels.push({
           position: [8, y - 5],
-          text: `${lat} N`,
+          text: `${lat}°N`,
           color: [100, 181, 246],
           size: 11
         })

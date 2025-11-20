@@ -282,12 +282,13 @@ function App() {
       const stationData = waveDataMap[stationCode];
       if (!stationData || !stationData.pgaHistory) return;
 
-      // 計算顯示窗口內的最大 PGA（使用當前 displayTimeWindow）
       const now = Date.now();
-      const displayCutoff = now - displayTimeWindow * 1000;
+      // **MODIFIED**: Use fixed data retention window for PGA calculation
+      const dataCutoff = now - DATA_RETENTION_WINDOW * 1000;
       const maxPga = stationData.pgaHistory
-        .filter(item => item.timestamp >= displayCutoff)
+        .filter(item => item.timestamp >= dataCutoff)
         .reduce((max, item) => Math.max(max, item.pga), 0);
+
       const intensity = pgaToIntensity(maxPga);
       const color = getIntensityColor(intensity);
 
@@ -298,7 +299,7 @@ function App() {
       };
     });
     return intensities;
-  }, [waveDataMap, displayTimeWindow]);  // 加入 displayTimeWindow 依賴
+  }, [waveDataMap]); // **MODIFIED**: Removed displayTimeWindow dependency
 
   // Process new pick packets
   useEffect(() => {
@@ -358,17 +359,31 @@ function App() {
 
   // Calculate the list of stations to display in the waveform panel
   const displayStations = useMemo(() => {
+    // **ADDED**: Helper function to sort stations, prioritizing those with picks
+    const sortWithPicks = (stationList) => {
+      return [...stationList].sort((a, b) => {
+        const aHasPick = waveDataMap[a]?.picks?.length > 0;
+        const bHasPick = waveDataMap[b]?.picks?.length > 0;
+
+        if (aHasPick && !bHasPick) return -1; // a comes first
+        if (!aHasPick && bHasPick) return 1;  // b comes first
+
+        // If both or neither have picks, sort by latitude
+        return (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0);
+      });
+    };
+
     switch (selectionMode) {
       case 'active':
         const received = Object.keys(waveDataMap);
-        return [...new Set(received)].sort((a, b) => (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0));
+        return sortWithPicks(received);
       case 'all_site':
-        return Object.keys(stationMap).sort((a, b) => (stationMap[b]?.latitude ?? 0) - (stationMap[a]?.latitude ?? 0));
+        return sortWithPicks(Object.keys(stationMap));
       case 'custom':
-        return customStations;
+        return customStations; // Custom order is preserved
       case 'target':
       default:
-        return EEW_TARGETS;
+        return sortWithPicks(EEW_TARGETS);
     }
   }, [selectionMode, waveDataMap, customStations, stationMap]);
 
