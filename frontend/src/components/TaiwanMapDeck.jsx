@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react';
+import {useState, useMemo, useEffect} from 'react';
 import DeckGL from '@deck.gl/react';
-import { ScatterplotLayer, TextLayer, PathLayer } from '@deck.gl/layers';
-import { Map } from 'react-map-gl/maplibre';
+import {ScatterplotLayer, TextLayer, PathLayer} from '@deck.gl/layers';
+import {Map} from 'react-map-gl/maplibre';
 import PropTypes from 'prop-types';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -15,9 +15,23 @@ const INITIAL_VIEW_STATE = {
   bearing: 0
 };
 
-function TaiwanMap({ stations, stationIntensities, waveDataMap, onBoundsChange }) {
+function TaiwanMap({
+                     stations,
+                     stationIntensities,
+                     waveDataMap,
+                     onBoundsChange
+                   }) {
   const [hoverInfo, setHoverInfo] = useState(null);
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
+  const [windowHeight, setWindowHeight] = useState(window.innerHeight);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowHeight(window.innerHeight);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const layers = useMemo(() => {
     const allLayers = [];
@@ -144,26 +158,26 @@ function TaiwanMap({ stations, stationIntensities, waveDataMap, onBoundsChange }
     return allLayers;
   }, [stations, stationIntensities, hoverInfo, waveDataMap]);
 
-  const handleHover = ({ object, x, y }) => {
-    setHoverInfo({ object, x, y });
+  const handleHover = ({object, x, y}) => {
+    setHoverInfo({object, x, y});
   };
 
-  const handleViewStateChange = ({ viewState: newViewState }) => {
+  const handleViewStateChange = ({viewState: newViewState}) => {
     setViewState(newViewState);
 
     // 計算可視範圍的緯度邊界
-    const { latitude, zoom } = newViewState;
+    const {latitude, zoom} = newViewState;
 
     // 根據 zoom 計算大約的緯度範圍
     // zoom 每增加1，範圍縮小約一半
     // 調整係數以更好地匹配地圖實際可視範圍
-    const latRange = 180 / Math.pow(2, zoom) * 3.35; 
+    const latRange = (180 * windowHeight * 1.66) / (512 * Math.pow(2, zoom));
     const minLat = Math.max(-90, latitude - latRange / 2);
     const maxLat = Math.min(90, latitude + latRange / 2);
 
     // 回傳邊界給父組件
     if (onBoundsChange) {
-      onBoundsChange({ minLat, maxLat });
+      onBoundsChange({minLat, maxLat});
     }
   };
 
