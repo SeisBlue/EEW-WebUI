@@ -1,4 +1,4 @@
-import {useState, useEffect, useMemo} from 'react';
+import {useState, useEffect, useMemo, useRef} from 'react';
 import './App.css';
 import Papa from 'papaparse';
 import TaiwanMap from './components/TaiwanMapDeck';
@@ -35,6 +35,7 @@ function App() {
   // WebSocket and data state
   const [isConnected, setIsConnected] = useState(false);
   const [socket, setSocket] = useState(null);
+  const reconnectTimer = useRef(null); // For WebSocket auto-reconnect
   const [wavePackets, setWavePackets] = useState([]);
   const [pickPackets, setPickPackets] = useState([]);
   const [latestWaveTime, setLatestWaveTime] = useState(null);
@@ -91,42 +92,67 @@ function App() {
     });
   }, []);
 
-  // WebSocket connection management
+  // WebSocket connection management with auto-reconnect
   useEffect(() => {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
-    const ws = new WebSocket(wsUrl);
-    ws.onopen = () => {
-      console.log('✅ [App] Connected');
-      setIsConnected(true);
-      setSocket(ws);
-    };
-    ws.onclose = () => {
-      console.log('❌ [App] Disconnected');
-      setIsConnected(false);
-      setSocket(null);
-    };
-    ws.onerror = (error) => console.error('❌ [App] WebSocket Error:', error);
+    let wsInstance = null;
 
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.event === 'wave_packet') {
-        const waveIds = Object.keys(message.data.data || {});
-        if (waveIds.length > 0) {
-          console.log(`📊 Received ${waveIds.length} waves:`, waveIds.slice(0, 5));
+    const connect = () => {
+      console.log('🔌 [App] Attempting to connect to WebSocket...');
+      wsInstance = new WebSocket(wsUrl);
+
+      wsInstance.onopen = () => {
+        console.log('✅ [App] WebSocket Connected');
+        setIsConnected(true);
+        setSocket(wsInstance);
+        if (reconnectTimer.current) {
+          clearTimeout(reconnectTimer.current);
+          reconnectTimer.current = null;
         }
-        setLatestWaveTime(new Date().toLocaleString('zh-TW'));
-        setWavePackets(prev => [message.data, ...prev].slice(0, 10));
-      } else if (message.event === 'pick_packet') {
-        console.log("Received pick_packet:", message.data);
-        setPickPackets(prev => [message.data, ...prev].slice(0, 20));
-      }
+      };
+
+      wsInstance.onclose = () => {
+        console.log('❌ [App] WebSocket Disconnected');
+        setIsConnected(false);
+        setSocket(null);
+        // Automatically attempt to reconnect
+        if (!reconnectTimer.current) {
+          console.log('🔄 [App] Reconnecting in 3 seconds...');
+          reconnectTimer.current = setTimeout(connect, 3000);
+        }
+      };
+
+      wsInstance.onerror = (error) => {
+        console.error('❌ [App] WebSocket Error:', error);
+        // The onclose event will fire after an error, triggering the reconnect logic.
+      };
+
+      wsInstance.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (message.event === 'wave_packet') {
+          setLatestWaveTime(new Date().toLocaleString('zh-TW'));
+          setWavePackets(prev => [message.data, ...prev].slice(0, 10));
+        } else if (message.event === 'pick_packet') {
+          console.log("Received pick_packet:", message.data);
+          setPickPackets(prev => [message.data, ...prev].slice(0, 20));
+        }
+      };
     };
+
+    connect(); // Initial connection attempt
 
     return () => {
-      if (ws.readyState === WebSocket.OPEN) ws.close();
+      // Cleanup on component unmount
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current);
+      }
+      if (wsInstance) {
+        wsInstance.onclose = null; // Prevent reconnect logic from firing on unmount
+        wsInstance.close();
+      }
     };
-  }, []);
+  }, []); // Run only once on mount
 
   // Process new wave packets
   useEffect(() => {
@@ -270,7 +296,6 @@ function App() {
         updated[stationCode] = stationData;
       });
 
-      console.log(`📈 Total stations in waveDataMap: ${Object.keys(updated).length}`);
       return updated;
     });
   }, [wavePackets]);
@@ -300,6 +325,19 @@ function App() {
     });
     return intensities;
   }, [waveDataMap]); // **MODIFIED**: Removed displayTimeWindow dependency
+
+  // Throttled station intensities for the map
+  const [mapStationIntensities, setMapStationIntensities] = useState({});
+  const latestStationIntensities = useRef(stationIntensities);
+  latestStationIntensities.current = stationIntensities;
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setMapStationIntensities(latestStationIntensities.current);
+    }, 1000); // Update map intensities every 1 second
+
+    return () => clearInterval(interval);
+  }, []); // Run this effect only once on mount
 
   // Process new pick packets
   useEffect(() => {
@@ -576,7 +614,7 @@ function App() {
               </div>
               <TaiwanMap
                 stations={mapDisplayStations}
-                stationIntensities={stationIntensities}
+                stationIntensities={mapStationIntensities}
                 waveDataMap={waveDataMap}
                 onBoundsChange={handleMapBoundsChange}
               />
