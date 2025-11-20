@@ -26,9 +26,9 @@ function TaiwanMap({ stations, stationIntensities, waveDataMap, onBoundsChange }
     const latGridLines = [];
     const latGridLabels = [];
     const minLat = 20;
-    const maxLat = 27;
-    const lonMin = 118;
-    const lonMax = 123;
+    const maxLat = 30;
+    const lonMin = 115;
+    const lonMax = 125;
 
     for (let lat = minLat; lat <= maxLat; lat += 0.5) {
       const isMajor = lat % 1 === 0; // 每 1 度是主要線
@@ -157,9 +157,9 @@ function TaiwanMap({ stations, stationIntensities, waveDataMap, onBoundsChange }
     // 根據 zoom 計算大約的緯度範圍
     // zoom 每增加1，範圍縮小約一半
     // 調整係數以更好地匹配地圖實際可視範圍
-    const latRange = 180 / Math.pow(2, zoom) * 3.2; // 降低係數以縮小範圍
-    const minLat = Math.max(20, latitude - latRange / 2);
-    const maxLat = Math.min(27, latitude + latRange / 2);
+    const latRange = 180 / Math.pow(2, zoom) * 3.35; 
+    const minLat = Math.max(-90, latitude - latRange / 2);
+    const maxLat = Math.min(90, latitude + latRange / 2);
 
     // 回傳邊界給父組件
     if (onBoundsChange) {
