@@ -12,15 +12,20 @@ const LAT_MIN = 21.3 // 涵蓋整個台灣（包括離島）
 // 時間軸設定
 const SAMPLE_RATE = 100 // 100 Hz
 
+// 佈局比例常數
+const WAVE_WIDTH_RATIO = 0.7    // 波形區域寬度佔面板寬度的比例
+const X_OFFSET_RATIO = 0.15     // 左側留白佔面板寬度的比例
+const BOTTOM_MARGIN = 60        // 底部留白（為時間軸預留空間）
+const TIME_AXIS_Y_OFFSET = 60   // 時間軸距離底部的距離
+
 const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations, stationMap, waveDataMap, latMin, latMax, panelWidth, panelHeight, renderTrigger, timeWindow, baseTime }) {
 
   const minLat = latMin ?? LAT_MIN
   const maxLat = latMax ?? LAT_MAX
 
-  // 提取公共常量
-  const waveWidth = panelWidth * 0.75
-  const xOffset = panelWidth * 0.15 - 60  // 整體向左移動 60 像素
-  const bottomMargin = 60  // 為時間軸留出底部空間
+  // 提取公共常量（使用全局定義的比例常數）
+  const waveWidth = panelWidth * WAVE_WIDTH_RATIO
+  const xOffset = panelWidth * X_OFFSET_RATIO
 
   // 計算波形路徑數據（使用 PathLayer）- 優化版本
   const waveformLayers = useMemo(() => {
@@ -29,7 +34,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
 
     // 預計算所有測站的 Y 位置
     const stationPositions = new Map()
-    const availableHeight = panelHeight - bottomMargin
+    const availableHeight = panelHeight - BOTTOM_MARGIN
     stations.forEach((stationCode) => {
       const station = stationMap[stationCode]
       if (!station || !station.latitude) return
@@ -111,7 +116,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
 
           // PERFORMANCE OPTIMIZATION: Downsample from 100Hz to 20Hz (every 5th point)
           // Reduces data points by 80%, massive performance gain with minimal visual difference
-          const downsampleFactor = 10
+          const downsampleFactor = 20
 
           // 優化：使用 for 循環代替 forEach，減少函數調用開銷
           for (let idx = 0; idx < len; idx += downsampleFactor) {
@@ -247,11 +252,10 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     }
 
     return layers
-  }, [stations, stationMap, waveDataMap, minLat, maxLat, panelWidth, panelHeight, title, baseTime, timeWindow, waveWidth, xOffset, bottomMargin])
+  }, [stations, stationMap, waveDataMap, minLat, maxLat, panelWidth, panelHeight, title, baseTime, timeWindow, waveWidth, xOffset])
 
   // 文字標籤圖層 - 優化版本
   const labelLayers = useMemo(() => {
-
     const labels = []
 
     stations.forEach((stationCode) => {
@@ -263,7 +267,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
 
       if (!station.latitude) return
       // 調整為可用高度（扣除底部時間軸空間）
-      const availableHeight = panelHeight - bottomMargin
+      const availableHeight = panelHeight - BOTTOM_MARGIN
       centerY = ((maxLat - station.latitude) / (maxLat - minLat)) * availableHeight
 
       const waveData = waveDataMap[stationCode]
@@ -278,12 +282,12 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
         const intensityStr = pgaToIntensity(pga)
         const intensityValue = getIntensityValue(intensityStr)
 
-        if (intensityValue === 0) {
-          textAlpha = 80  // 0 級：alpha 80
-        } else if (intensityValue < 4) {
-          textAlpha = 70  // 1-3 級：alpha 70
+        if (intensityValue < 2) {
+          textAlpha = 50  // 0 級：alpha 80
+        } else if (intensityValue < 3) {
+          textAlpha = 100  // 1-2 級：alpha 70
         } else {
-          textAlpha = 255 // 4 級以上：正常顏色
+          textAlpha = 255 // 3 級以上：正常顏色
           // 4 級以上：文字位置往外挪
           stationLabelOffset = -40
           pgaLabelOffset = 60
@@ -325,15 +329,13 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     })
 
     // 時間軸標籤 - 顯示實際時間和相對時間差
-    const timeAxisY = panelHeight - 50  // 增加底部空間，從 25 改為 50
-    const timeWaveWidth = panelWidth * 0.75
-    // const timeXOffset = panelWidth * 0.15  // 改用上面定義的 xOffset
+    const timeAxisY = panelHeight - TIME_AXIS_Y_OFFSET
     const numTicks = 7
     const now = new Date(renderTrigger) // 使用 renderTrigger 的時間
 
     for (let i = 0; i < numTicks; i++) {
       const timeValue = -i * (timeWindow / (numTicks - 1))
-      const x = xOffset + timeWaveWidth - (i / (numTicks - 1)) * timeWaveWidth
+      const x = xOffset + waveWidth - (i / (numTicks - 1)) * waveWidth
 
       let label
       let color
@@ -378,7 +380,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
         getText: [waveDataMap, renderTrigger] // 添加 renderTrigger 以更新時間顯示
       }
     })]
-  }, [stations, stationMap, waveDataMap, minLat, maxLat, panelWidth, panelHeight, renderTrigger, timeWindow, waveWidth, xOffset, bottomMargin])
+  }, [stations, stationMap, waveDataMap, minLat, maxLat, panelWidth, panelHeight, renderTrigger, timeWindow, waveWidth, xOffset])
 
   // 緯度網格線
   const gridLayers = useMemo(() => {
@@ -428,17 +430,16 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
 
   // 時間軸線
   const timeAxisLayer = useMemo(() => {
-    const timeAxisY = panelHeight - 60 // 與標籤位置一致，從 25 改為 50
-    const axisWaveWidth = panelWidth * 0.75
+    const timeAxisY = panelHeight - TIME_AXIS_Y_OFFSET
 
     const lines = [{
-      path: [[xOffset, timeAxisY], [xOffset + axisWaveWidth, timeAxisY]],
+      path: [[xOffset, timeAxisY], [xOffset + waveWidth, timeAxisY]],
       color: [255, 255, 255, 128]  // 增加不透明度，更清晰
     }]
 
     const numTicks = 7
     for (let i = 0; i < numTicks; i++) {
-      const x = xOffset + axisWaveWidth - (i / (numTicks - 1)) * axisWaveWidth
+      const x = xOffset + waveWidth - (i / (numTicks - 1)) * waveWidth
       lines.push({
         path: [[x, timeAxisY - 5], [x, timeAxisY + 5]],  // 刻度線更長，從 5 改為 ±5
         color: [255, 255, 255, 128]
@@ -483,7 +484,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
   const validHeight = Math.max(panelHeight, 1)
 
   // 計算 wave-view 的相機位置
-  const waveSpeed = (panelWidth * 0.75) / (timeWindow * 1000) // pixels / ms
+  const waveSpeed = waveWidth / (timeWindow * 1000) // pixels / ms (使用 waveWidth 確保與波形繪製速度一致)
   const cameraXOffset = (renderTrigger - baseTime) * waveSpeed
 
   // 使用左上角为原点的坐标系统
