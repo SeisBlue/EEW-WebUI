@@ -11,7 +11,7 @@ from obspy.signal.trigger import classic_sta_lta, trigger_onset
 from scipy.signal import detrend, iirfilter, sosfilt, zpk2sos
 from scipy.spatial import cKDTree
 
-from model import get_full_model
+from ttsam import get_full_model
 
 tree = None
 vs30_table = None
