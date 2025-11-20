@@ -299,7 +299,7 @@ async def redis_pick_reader():
     logger.info("Starting Redis pick reader...")
     redis_client = redis.Redis(**REDIS_CONFIG, decode_responses=False)
     stream_key = "pick"
-    last_id = '$'
+    last_id = '0-0'
 
     while True:
         try:
