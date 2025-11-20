@@ -32,7 +32,7 @@ class RedisAdapter:
         try:
             messages = self.redis_client.xrange(stream_key, min=start_id, max=end_id)
             if not messages:
-                logger.warning(f"No data found for {stream_key} in the given time range.")
+                # logger.warning(f"No data found for {stream_key} in the given time range.")
                 return None
 
             # Process the messages to reconstruct the waveform
@@ -52,6 +52,34 @@ class RedisAdapter:
             logger.error(f"Error fetching waveform data from Redis: {e}")
             return None
 
+    def get_picks(self, start_time, end_time, max_picks=100):
+        """
+        Fetch pick data from the 'pick' Redis Stream within a specified time range.
+        """
+        if not self.redis_client:
+            logger.error("Redis client not available.")
+            return []
+
+        stream_key = "pick"
+        start_id = f"{int(start_time * 1000)}-0"
+        end_id = f"{int(end_time * 1000)}-0"
+
+        try:
+            messages = self.redis_client.xrange(stream_key, min=start_id, max=end_id, count=max_picks)
+            picks = []
+            for _, message in messages:
+                if b'data' in message:
+                    try:
+                        pick_data = json.loads(message[b'data'])
+                        picks.append(pick_data)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse pick data: {e}")
+            return picks
+
+        except Exception as e:
+            logger.error(f"Error fetching picks from Redis: {e}")
+            return []
+
 if __name__ == '__main__':
     # Example usage:
     adapter = RedisAdapter()
@@ -67,3 +95,9 @@ if __name__ == '__main__':
             logger.info(f"Successfully fetched waveform data with {len(waveform)} samples.")
         else:
             logger.warning("Failed to fetch waveform data.")
+            
+        picks = adapter.get_picks(start_timestamp, end_timestamp)
+        if picks:
+            logger.info(f"Successfully fetched {len(picks)} picks.")
+        else:
+            logger.warning("Failed to fetch picks.")

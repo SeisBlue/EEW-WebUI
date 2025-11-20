@@ -114,44 +114,26 @@ def signal_processing(waveform):
 
 # ============ Main Logic ============
 
-def get_recent_picks(redis_client, lookback_seconds=60, max_picks=100):
+def get_recent_picks(redis_adapter, lookback_seconds=60, max_picks=100):
     """
-    Fetch recent picks from Redis 'pick' stream.
+    Fetch recent picks from Redis using the adapter.
     Returns a list of pick dictionaries, sorted by pick_time.
     """
-    stream_key = "pick"
-    # Calculate min ID for lookback (approximate)
-    # Redis stream IDs are timestamp-based (ms)
-    min_id = int((time.time() - lookback_seconds) * 1000)
+    now = time.time()
+    start_time = now - lookback_seconds
     
-    try:
-        # Fetch from stream
-        # We use xrange to get picks in the time window
-        messages = redis_client.xrange(stream_key, min=min_id, max="+", count=max_picks)
-        
-        picks = []
-        for msg_id, msg_data in messages:
-            if b'data' in msg_data:
-                try:
-                    # Data is JSON string
-                    pick_data = json.loads(msg_data[b'data'])
-                    picks.append(pick_data)
-                except Exception as e:
-                    logger.warning(f"Failed to parse pick data: {e}")
-        
-        # Sort by pick_time (ascending)
-        for p in picks:
-            try:
-                p['pick_time_float'] = float(p['pick_time'])
-            except:
-                p['pick_time_float'] = 0.0
-                
-        picks.sort(key=lambda x: x['pick_time_float'])
-        
-        return picks
-    except Exception as e:
-        logger.error(f"Error fetching picks from Redis: {e}")
-        return []
+    picks = redis_adapter.get_picks(start_time, now, max_picks=max_picks)
+    
+    # Sort by pick_time (ascending)
+    for p in picks:
+        try:
+            p['pick_time_float'] = float(p['pick_time'])
+        except:
+            p['pick_time_float'] = 0.0
+            
+    picks.sort(key=lambda x: x['pick_time_float'])
+    
+    return picks
 
 def fetch_and_process_waveforms_from_picks(redis_adapter, picks, duration=30):
     """
@@ -349,7 +331,7 @@ def main():
     lookback = 60 # seconds
     logger.info(f"Fetching picks from last {lookback} seconds...")
     
-    picks = get_recent_picks(redis_adapter.redis_client, lookback_seconds=lookback)
+    picks = get_recent_picks(redis_adapter, lookback_seconds=lookback)
     
     if picks:
         logger.info(f"Found {len(picks)} picks.")
