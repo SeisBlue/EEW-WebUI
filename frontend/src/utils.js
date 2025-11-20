@@ -44,9 +44,9 @@ export function isTSMIPStation(stationCode) {
 }
 
 /**
- * 將 PGA (gal, cm/s^2) 轉換為台灣震度級數。
+ * 將 PGA (gal, m/s^2) 轉換為台灣震度級數。
  * 根據台灣中央氣象署的震度分級標準。
- * @param {number} pga - 地動加速度峰值，單位為 gal (cm/s^2)。
+ * @param {number} pga - 地動加速度峰值，單位為 gal (m/s^2)。
  */
 export function pgaToIntensity(pga) {
   if (pga < 0.002) return "0";

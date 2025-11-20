@@ -3,10 +3,11 @@ import PropTypes from 'prop-types'
 import DeckGL from '@deck.gl/react'
 import { OrthographicView } from '@deck.gl/core'
 import { PathLayer, TextLayer } from '@deck.gl/layers'
+import { pgaToIntensity, getIntensityValue } from '../utils'
 import './RealtimeWaveformDeck.css'
 
-const LAT_MAX = 26.0
-const LAT_MIN = 21.8 // 涵蓋整個台灣（包括離島）
+const LAT_MAX = 26.3
+const LAT_MIN = 21.3 // 涵蓋整個台灣（包括離島）
 
 // 時間軸設定
 const SAMPLE_RATE = 100 // 100 Hz
@@ -18,7 +19,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
 
   // 提取公共常量
   const waveWidth = panelWidth * 0.75
-  const xOffset = panelWidth * 0.15
+  const xOffset = panelWidth * 0.15 - 60  // 整體向左移動 60 像素
   const bottomMargin = 60  // 為時間軸留出底部空間
 
   // 計算波形路徑數據（使用 PathLayer）- 優化版本
@@ -63,6 +64,27 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
         // 計算速度：像素/毫秒
         const speed = waveWidth / (timeWindow * 1000)
 
+        // 根據 PGA 計算震度等級 (使用 utils.js 的函數)
+        const pga = waveData.lastPga || 0
+        const intensityStr = pgaToIntensity(pga)
+        const intensityValue = getIntensityValue(intensityStr)
+
+        // 根據震度和 pick 決定顏色和寬度
+        let waveColor
+        let lineWidth  // 改名為 lineWidth 避免與外部 waveWidth 衝突
+        const hasPicks = waveData.picks && waveData.picks.length > 0
+
+        if (intensityValue >= 4) {
+          // 4 級以上：正常綠色
+          waveColor = [76, 175, 80, 230]
+        } else {
+          // 0-3 級：調淡 (降低 alpha)
+          waveColor = [76, 175, 80, 70]
+        }
+
+        // 有 pick 的波形調粗
+        lineWidth = hasPicks ? 2.0 : 1.2
+
         waveData.dataPoints.forEach(point => {
           const { timestamp, endTimestamp, values, samprate, isGap } = point
 
@@ -80,13 +102,13 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
           // 轉換為相對 T0 的時間： [T - T0 - timeWindow, T - T0]
           // 對應的 X 座標範圍...
           // 簡單起見，這裡不過濾，或者只過濾非常遠的數據
-          
+
           const pathPoints = []
 
           // 使用實際的採樣率和時間戳
           const effectiveSamprate = samprate || SAMPLE_RATE
           const len = values.length
-          
+
           // PERFORMANCE OPTIMIZATION: Downsample from 100Hz to 20Hz (every 5th point)
           // Reduces data points by 80%, massive performance gain with minimal visual difference
           const downsampleFactor = 10
@@ -95,7 +117,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
           for (let idx = 0; idx < len; idx += downsampleFactor) {
             // 計算這個樣本點的實際時間
             const sampleTime = timestamp + (idx / effectiveSamprate) * 1000  // 毫秒
-            
+
             // 計算相對於 baseTime 的 X 座標
             // 公式：x = xOffset + waveWidth + speed * (sampleTime - baseTime - timeWindow * 1000)
             // 當 sampleTime = baseTime + timeWindow * 1000 (即 T = baseTime + timeWindow) 時，應該在最右邊 (xOffset + waveWidth)
@@ -103,14 +125,14 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
             // 所以這裡計算的是 "絕對" X 座標，相機之後會平移
             // 讓 sampleTime = baseTime 時，x = xOffset + waveWidth
             // 這樣隨著時間增加，相機向右移動，看到的波形就是向左移動
-            
+
             // 修正公式：
             // 定義 X=0 在 baseTime 時刻的 "最右邊" (xOffset + waveWidth)
             // 每個樣本的 X = (xOffset + waveWidth) + (sampleTime - baseTime) * speed
             // 相機的 Target X 也會隨時間增加
-            
+
             const x = (xOffset + waveWidth) + (sampleTime - baseTime) * speed
-            
+
             const normalizedValue = values[idx] / displayScale
             const clampedValue = Math.max(-1, Math.min(1, normalizedValue))
             const y = centerY - clampedValue * (waveHeight / 2)
@@ -121,8 +143,8 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
           if (pathPoints.length > 1) {
             waveformData.push({
               path: pathPoints,
-              color: [76, 175, 80, 230],
-              width: 1.2
+              color: waveColor,
+              width: lineWidth
             })
           }
         })
@@ -131,10 +153,10 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       // 處理 Pick 標記
       if (waveData?.picks?.length > 0) {
         const speed = waveWidth / (timeWindow * 1000)
-        
+
         waveData.picks.forEach(pick => {
           const pickTime = pick.time
-          
+
           // 計算 X 座標
           const x = (xOffset + waveWidth) + (pickTime - baseTime) * speed
 
@@ -229,9 +251,6 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
 
   // 文字標籤圖層 - 優化版本
   const labelLayers = useMemo(() => {
-    // const waveWidth = panelWidth * 0.75 // 已提取
-    // const xOffset = panelWidth * 0.15 // 已提取
-    // const bottomMargin = 60  // 已提取
 
     const labels = []
 
@@ -249,11 +268,33 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
 
       const waveData = waveDataMap[stationCode]
 
+      // 計算震度等級來決定文字顏色和位置
+      let textAlpha = 255 // 預設完全不透明
+      let stationLabelOffset = -10  // 測站代碼的 X offset
+      let pgaLabelOffset = 5        // PGA 的 X offset
+
+      if (waveData?.lastPga !== undefined) {
+        const pga = waveData.lastPga
+        const intensityStr = pgaToIntensity(pga)
+        const intensityValue = getIntensityValue(intensityStr)
+
+        if (intensityValue === 0) {
+          textAlpha = 80  // 0 級：alpha 80
+        } else if (intensityValue < 4) {
+          textAlpha = 70  // 1-3 級：alpha 70
+        } else {
+          textAlpha = 255 // 4 級以上：正常顏色
+          // 4 級以上：文字位置往外挪
+          stationLabelOffset = -40
+          pgaLabelOffset = 60
+        }
+      }
+
       // 測站代碼標籤
       labels.push({
-        position: [xOffset - 30, centerY],
+        position: [xOffset + stationLabelOffset, centerY],
         text: stationCode,
-        color: waveData ? [224, 224, 224] : [102, 102, 102],
+        color: waveData ? [224, 224, 224, textAlpha] : [102, 102, 102, 255],
         size: 10,
         anchor: 'end',
         alignmentBaseline: 'center'
@@ -262,9 +303,9 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       // 測站中文名稱
       if (station.station_zh) {
         labels.push({
-          position: [xOffset + waveWidth + 5, centerY - 8],
+          position: [xOffset + waveWidth + pgaLabelOffset, centerY - 8],
           text: station.station_zh,
-          color: [224, 224, 224],
+          color: [224, 224, 224, textAlpha],
           size: 9,
           anchor: 'start',
           alignmentBaseline: 'center'
@@ -273,9 +314,9 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       // PGA 數值
       if (waveData?.lastPga) {
         labels.push({
-          position: [xOffset + waveWidth + 5, centerY + 2],
+          position: [xOffset + waveWidth + pgaLabelOffset, centerY + 2],
           text: `PGA: ${waveData.lastPga.toFixed(2)}`,
-          color: [76, 175, 80],
+          color: [76, 175, 80, textAlpha],
           size: 9,
           anchor: 'start',
           alignmentBaseline: 'center'
@@ -286,13 +327,13 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
     // 時間軸標籤 - 顯示實際時間和相對時間差
     const timeAxisY = panelHeight - 50  // 增加底部空間，從 25 改為 50
     const timeWaveWidth = panelWidth * 0.75
-    const timeXOffset = panelWidth * 0.15
+    // const timeXOffset = panelWidth * 0.15  // 改用上面定義的 xOffset
     const numTicks = 7
     const now = new Date(renderTrigger) // 使用 renderTrigger 的時間
 
     for (let i = 0; i < numTicks; i++) {
       const timeValue = -i * (timeWindow / (numTicks - 1))
-      const x = timeXOffset + timeWaveWidth - (i / (numTicks - 1)) * timeWaveWidth
+      const x = xOffset + timeWaveWidth - (i / (numTicks - 1)) * timeWaveWidth
 
       let label
       let color
@@ -387,18 +428,17 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
 
   // 時間軸線
   const timeAxisLayer = useMemo(() => {
-    const timeAxisY = panelHeight - 50  // 與標籤位置一致，從 25 改為 50
+    const timeAxisY = panelHeight - 60 // 與標籤位置一致，從 25 改為 50
     const axisWaveWidth = panelWidth * 0.75
-    const axisXOffset = panelWidth * 0.15
 
     const lines = [{
-      path: [[axisXOffset, timeAxisY], [axisXOffset + axisWaveWidth, timeAxisY]],
+      path: [[xOffset, timeAxisY], [xOffset + axisWaveWidth, timeAxisY]],
       color: [255, 255, 255, 128]  // 增加不透明度，更清晰
     }]
 
     const numTicks = 7
     for (let i = 0; i < numTicks; i++) {
-      const x = axisXOffset + axisWaveWidth - (i / (numTicks - 1)) * axisWaveWidth
+      const x = xOffset + axisWaveWidth - (i / (numTicks - 1)) * axisWaveWidth
       lines.push({
         path: [[x, timeAxisY - 5], [x, timeAxisY + 5]],  // 刻度線更長，從 5 改為 ±5
         color: [255, 255, 255, 128]
@@ -412,7 +452,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({ title, stations,
       getColor: d => d.color,
       widthMinPixels: 1.5  // 增加線條寬度
     })
-  }, [panelWidth, panelHeight])
+  }, [panelWidth, panelHeight, xOffset])
 
   const allLayers = [...gridLayers, timeAxisLayer, ...waveformLayers, ...labelLayers]
 
