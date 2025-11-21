@@ -535,7 +535,6 @@ async def redis_wave_reader():
                     processed_count += 1
 
             # Batch process all waveforms at once
-            # Batch process all waveforms at once
             if not batch_waveforms:
                 continue
 
@@ -594,7 +593,7 @@ async def redis_wave_reader():
                 logger.info(f"Processed {processed_count} Z-channel waves in {processing_time:.3f}s, sending {len(wave_batch)} to clients")
                 
                 await socket_manager.send_wave_packet(wave_packet)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.25)
 
         except Exception as e:
             logger.error(f"Error in redis_wave_reader: {e}")
@@ -706,6 +705,7 @@ async def redis_eew_reader():
 
 # Load site info
 site_info_file = "/workspace/station/site_info.csv"
+constant_dict = {}
 try:
     logger.info(f"Loading {site_info_file}...")
     site_info = pd.read_csv(site_info_file)
@@ -729,18 +729,27 @@ def convert_to_tsmip_legacy_naming(wave):
     return wave
 
 
+# Cache for missing stations to avoid log flooding
+missing_stations_cache = set()
+
 def get_wave_constant(wave):
     # count to cm/s^2
-    try:
-        wave_constant = constant_dict[wave["station"], wave["channel"]]
-
-    except Exception as e:
+    station = wave["station"]
+    channel = wave["channel"]
+    key = (station, channel)
+    
+    # Fast path: direct lookup
+    if key in constant_dict:
+        return constant_dict[key]
+    
+    # Slow path: handle missing key
+    if key not in missing_stations_cache:
         logger.debug(
-            f"{wave['station']} not found in site_info.txt, use default 3.2e-6"
+            f"{station} {channel} not found in site_info.txt, use default 3.2e-6"
         )
-        wave_constant = 3.2e-6
-
-    return wave_constant
+        missing_stations_cache.add(key)
+        
+    return 3.2e-6
 
 def batch_signal_processing(waveforms):
     """
