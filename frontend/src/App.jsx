@@ -79,12 +79,12 @@ function App() {
         event: 'subscribe_stations',
         data: { stations: stationsToSubscribe }
       }));
-      
+
       // Request historical data for these stations (120 seconds window)
       console.log(`[App] Requesting historical data for ${stationsToSubscribe.length} stations:`, stationsToSubscribe.slice(0, 10));
       socket.send(JSON.stringify({
         event: 'request_historical_data',
-        data: { 
+        data: {
           stations: stationsToSubscribe,
           window_seconds: 120
         }

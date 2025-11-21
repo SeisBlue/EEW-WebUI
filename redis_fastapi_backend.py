@@ -257,9 +257,10 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
     streams_with_data = sum(1 for r in results if r)
     logger.info(f"get_historical_waves_bulk: {streams_with_data}/{len(results)} streams have data")
     
-    # Group chunks by time to send as separate packets
-    # This allows frontend to properly display historical timeline
-    time_grouped_data = {}  # {time_key: [(wave_id, waveform, meta), ...]}
+    # Group chunks by 5-second windows to reduce packet count
+    # This balances between data granularity and transmission efficiency
+    TIME_WINDOW = 5  # seconds
+    time_grouped_data = {}  # {time_window_key: [chunk, ...]}
     
     for key, messages in zip(stream_keys, results):
         if not messages:
@@ -268,7 +269,7 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
         key_str = key.decode('utf-8') if isinstance(key, bytes) else key
         _, station, channel = key_str.split(":")
         
-        # Process each message chunk separately to preserve timestamps
+        # Process each message chunk
         for msg_id, msg_data in messages:
             waveform_bytes = msg_data.get(b'data')
             if not waveform_bytes:
@@ -294,12 +295,12 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
             endt = float(msg_data.get(b'endt', b'0'))
             samprate = int(float(msg_data.get(b'samprate', b'100')))
             
-            # Group by start time (rounded to second) to batch chunks together
-            time_key = int(startt)
-            if time_key not in time_grouped_data:
-                time_grouped_data[time_key] = []
+            # Group by 5-second windows
+            time_window_key = int(startt / TIME_WINDOW)
+            if time_window_key not in time_grouped_data:
+                time_grouped_data[time_window_key] = []
             
-            time_grouped_data[time_key].append({
+            time_grouped_data[time_window_key].append({
                 'wave_id': wave_id,
                 'waveform': waveform_scaled,
                 'startt': startt,
@@ -307,40 +308,70 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
                 'samprate': samprate
             })
     
-    # Process each time group
+    if not time_grouped_data:
+        return []
+    
+    # Process each 5-second window
     all_packets = []
     for time_key in sorted(time_grouped_data.keys()):
-        chunk_data = time_grouped_data[time_key]
+        chunk_list = time_grouped_data[time_key]
         
-        # Batch process waveforms for this time group
-        batch_waveforms = [item['waveform'] for item in chunk_data]
+        # Group chunks by station and concatenate waveforms
+        station_chunks = {}  # {wave_id: [chunks...]}
+        for chunk in chunk_list:
+            wave_id = chunk['wave_id']
+            if wave_id not in station_chunks:
+                station_chunks[wave_id] = []
+            station_chunks[wave_id].append(chunk)
+        
+        # Concatenate chunks for each station
+        chunks_to_process = []
+        for wave_id, chunks in station_chunks.items():
+            # Sort by startt to maintain chronological order
+            chunks.sort(key=lambda c: c['startt'])
+            
+            # Concatenate waveforms
+            concatenated_waveform = np.concatenate([c['waveform'] for c in chunks])
+            
+            # Use first chunk's startt and last chunk's endt
+            chunks_to_process.append({
+                'wave_id': wave_id,
+                'waveform': concatenated_waveform,
+                'startt': chunks[0]['startt'],
+                'endt': chunks[-1]['endt'],
+                'samprate': chunks[0]['samprate']
+            })
+        
+        # Batch process concatenated waveforms
+        batch_waveforms = [chunk['waveform'] for chunk in chunks_to_process]
         
         try:
             processed_waveforms = batch_signal_processing(batch_waveforms)
             
+            # Build packet for this 5-second window
             wave_batch = {}
             for i, waveform_processed in enumerate(processed_waveforms):
                 if waveform_processed is None or len(waveform_processed) == 0:
                     continue
                 
-                item = chunk_data[i]
+                chunk = chunks_to_process[i]
                 pga = float(np.max(np.abs(waveform_processed)))
                 
-                wave_batch[item['wave_id']] = {
+                wave_batch[chunk['wave_id']] = {
                     "waveform": waveform_processed.tolist(),
                     "pga": pga,
-                    "startt": item['startt'],
-                    "endt": item['endt'],
-                    "samprate": item['samprate'],
+                    "startt": chunk['startt'],
+                    "endt": chunk['endt'],
+                    "samprate": chunk['samprate'],
                 }
             
             if wave_batch:
                 all_packets.append(wave_batch)
                 
         except Exception as e:
-            logger.error(f"Batch processing error for time {time_key}: {e}")
+            logger.error(f"Batch processing error for time window {time_key}: {e}")
     
-    logger.info(f"get_historical_waves_bulk: Created {len(all_packets)} time-grouped packets")
+    logger.info(f"get_historical_waves_bulk: Grouped into {len(all_packets)} 5-second window packets")
     return all_packets
 
 
@@ -558,6 +589,7 @@ async def redis_wave_reader():
                 logger.info(f"Processed {processed_count} Z-channel waves in {processing_time:.3f}s, sending {len(wave_batch)} to clients")
                 
                 await socket_manager.send_wave_packet(wave_packet)
+                await asyncio.sleep(1)
 
         except Exception as e:
             logger.error(f"Error in redis_wave_reader: {e}")
