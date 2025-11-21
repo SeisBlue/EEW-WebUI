@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
-import GeographicWavePanel from './WaveformDeck/GeographicWavePanel';
-import { LAT_MIN, LAT_MAX } from './WaveformDeck/constants';
+import WaveformPanel from './WaveformPanel';
+import { LAT_MIN, LAT_MAX } from './constants';
 import './RealtimeWaveformDeck.css';
 
 const DEFAULT_DISPLAY_WINDOW = 120;
@@ -112,7 +112,7 @@ function RealtimeWaveformDeck({
     <div className="realtime-waveform geographic">
       <div ref={panelRef} className="waveform-panel-container" style={{ flex: 1, overflow: 'hidden' }}>
         {dimensions && dimensions.width > 0 && dimensions.height > 0 && (
-          <GeographicWavePanel
+          <WaveformPanel
             title={title}
             stations={displayStations}
             stationMap={stationMap}

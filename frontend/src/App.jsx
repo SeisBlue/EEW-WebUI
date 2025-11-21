@@ -1,7 +1,7 @@
-import {useState, useEffect, useMemo} from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import './App.css';
 import TaiwanMap from './components/TaiwanMapDeck';
-import RealtimeWaveformDeck from './components/RealtimeWaveformDeck';
+import { RealtimeWaveformDeck } from './components/WaveformDeck';
 import StationSelection from './components/StationSelection.jsx';
 
 // Import custom hooks
@@ -29,7 +29,7 @@ function App() {
   const [displayTimeWindow, setDisplayTimeWindow] = useState(DEFAULT_DISPLAY_WINDOW);
 
   // ===== Custom Hooks =====
-  
+
   // 1. Load station metadata from CSV files
   const { allTargetStations, stationMap } = useStationMetadata();
 
@@ -68,14 +68,14 @@ function App() {
     if (stationsToSubscribe.length > 0) {
       socket.send(JSON.stringify({
         event: 'subscribe_stations',
-        data: {stations: stationsToSubscribe}
+        data: { stations: stationsToSubscribe }
       }));
     }
     return () => {
       if (socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({
           event: 'subscribe_stations',
-          data: {stations: []}
+          data: { stations: [] }
         }));
       }
     };

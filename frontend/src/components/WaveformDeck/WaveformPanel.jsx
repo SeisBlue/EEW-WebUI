@@ -8,7 +8,7 @@ import { useLabelLayers } from './hooks/useLabelLayers';
 import { useWaveformLayers } from './hooks/useWaveformLayers';
 import { LAT_MAX, LAT_MIN, LEFT_MARGIN, RIGHT_MARGIN, BOTTOM_MARGIN } from './constants';
 
-const GeographicWavePanel = memo(function GeographicWavePanel({
+const WaveformPanel = memo(function WaveformPanel({
   title,
   stations,
   stationMap,
@@ -141,7 +141,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({
   }, [stations, waveDataMap]);
 
   return (
-    <div className="geographic-wave-panel">
+    <div className="waveform-panel">
       <div className="panel-header">
         <h3>{title}</h3>
         <span className="station-count">{activeStationCount} / {stations.length} 站</span>
@@ -180,7 +180,7 @@ const GeographicWavePanel = memo(function GeographicWavePanel({
   );
 });
 
-GeographicWavePanel.propTypes = {
+WaveformPanel.propTypes = {
   title: PropTypes.string.isRequired,
   stations: PropTypes.array.isRequired,
   stationMap: PropTypes.object.isRequired,
@@ -194,4 +194,4 @@ GeographicWavePanel.propTypes = {
   baseTime: PropTypes.number.isRequired
 };
 
-export default GeographicWavePanel;
+export default WaveformPanel;

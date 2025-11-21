@@ -18,7 +18,7 @@
   flex-direction: column;
 }
 
-.geographic-wave-panel {
+.waveform-panel {
   border: 1px solid var(--color-border-base);
   border-radius: var(--radius-md);
   background: var(--color-bg-base);
@@ -31,7 +31,7 @@
   width: 100%;
 }
 
-.geographic-wave-panel .panel-header {
+.waveform-panel .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -42,13 +42,13 @@
   flex-shrink: 0;
 }
 
-.geographic-wave-panel .panel-header h3 {
+.waveform-panel .panel-header h3 {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
 }
 
-.geographic-wave-panel .station-count {
+.waveform-panel .station-count {
   font-size: 0.75rem;
   background: var(--color-bg-glass);
   padding: var(--radius-sm) var(--radius-md);
@@ -56,7 +56,7 @@
 }
 
 /* DeckGL 容器样式：确保正确定位和渲染 */
-.geographic-wave-panel .deckgl-container {
+.waveform-panel .deckgl-container {
   flex: 1;
   position: relative;
   overflow: hidden;
@@ -65,7 +65,7 @@
 }
 
 /* 确保 DeckGL 内部元素不会逃逸 */
-.geographic-wave-panel .deckgl-container > div {
+.waveform-panel .deckgl-container > div {
   position: absolute !important;
   left: 0 !important;
   top: 0 !important;
@@ -74,7 +74,7 @@
 }
 
 /* DeckGL canvas 强制相对定位并启用 GPU 加速 */
-.geographic-wave-panel .deckgl-container canvas {
+.waveform-panel .deckgl-container canvas {
   position: absolute !important;
   left: 0 !important;
   top: 0 !important;
@@ -84,3 +84,4 @@
   -webkit-backface-visibility: hidden;
   -webkit-transform: translateZ(0);
 }
+
