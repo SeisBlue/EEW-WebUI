@@ -12,7 +12,9 @@ export function useWebSocket({ onWavePacket, onPickPacket, onHistoricalData }) {
   const [isConnected, setIsConnected] = useState(false);
   const [socket, setSocket] = useState(null);
   const reconnectTimer = useRef(null);
-  
+  const wavePacketBuffer = useRef([]);
+  const pickPacketBuffer = useRef([]);
+
   // Use refs to store callbacks to avoid dependency issues
   const onWavePacketRef = useRef(onWavePacket);
   const onPickPacketRef = useRef(onPickPacket);
@@ -65,10 +67,10 @@ export function useWebSocket({ onWavePacket, onPickPacket, onHistoricalData }) {
         if (message.event === 'connect_init') {
           console.log('✅ [useWebSocket] Connection initialized');
         } else if (message.event === 'wave_packet') {
-          onWavePacketRef.current?.(message.data);
+          wavePacketBuffer.current.push(message.data);
         } else if (message.event === 'pick_packet') {
           console.log('[useWebSocket] Received pick_packet:', message.data);
-          onPickPacketRef.current?.(message.data);
+          pickPacketBuffer.current.push(message.data);
         } else if (message.event === 'historical_data') {
           console.log('[useWebSocket] Received historical_data:', message.data);
           onHistoricalDataRef.current?.(message.data);
@@ -78,8 +80,21 @@ export function useWebSocket({ onWavePacket, onPickPacket, onHistoricalData }) {
 
     connect(); // Initial connection attempt
 
+    // Flush buffers periodically
+    const flushInterval = setInterval(() => {
+      if (wavePacketBuffer.current.length > 0) {
+        onWavePacketRef.current?.(wavePacketBuffer.current);
+        wavePacketBuffer.current = [];
+      }
+      if (pickPacketBuffer.current.length > 0) {
+        onPickPacketRef.current?.(pickPacketBuffer.current);
+        pickPacketBuffer.current = [];
+      }
+    }, 100); // Flush every 100ms
+
     return () => {
       // Cleanup on component unmount
+      clearInterval(flushInterval);
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current);
       }

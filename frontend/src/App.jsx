@@ -35,19 +35,19 @@ function App() {
 
   // 2. Manage WebSocket connection
   const { isConnected, socket } = useWebSocket({
-    onWavePacket: (data) => {
+    onWavePacket: (packets) => {
       setLatestWaveTime(new Date().toLocaleString('zh-TW'));
-      setWavePackets(prev => [data, ...prev].slice(0, 10));
+      setWavePackets(packets);
     },
-    onPickPacket: (data) => {
-      console.log('[App] Received pick_packet:', data);
-      setPickPackets(prev => [data, ...prev].slice(0, 20));
+    onPickPacket: (packets) => {
+      console.log(`[App] Received ${packets.length} pick packets`);
+      setPickPackets(packets);
     },
     onHistoricalData: (data) => {
       console.log('[App] Received historical_data:', data);
       // Add historical data to wavePackets (it has the same format)
       if (data && data.data && Object.keys(data.data).length > 0) {
-        setWavePackets(prev => [data, ...prev].slice(0, 10));
+        setWavePackets([data]);
         setLatestWaveTime(new Date().toLocaleString('zh-TW'));
       }
     }
