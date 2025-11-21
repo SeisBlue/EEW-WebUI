@@ -114,7 +114,6 @@ class ConnectionManager:
 
 socket_manager = ConnectionManager()
 
-# --- WebSocket 端點 ---
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await socket_manager.connect(websocket)
@@ -127,6 +126,91 @@ async def websocket_endpoint(websocket: WebSocket):
             if event == "subscribe_stations":
                 stations = payload.get("stations", [])
                 socket_manager.subscribe(websocket, stations)
+            
+            elif event == "request_historical_data":
+                # Handle request for historical data (last 120 seconds)
+                stations = payload.get("stations", [])
+                window_seconds = payload.get("window_seconds", 120)
+                
+                if stations:
+                    logger.info(f"Client {websocket.client.host} requested {window_seconds}s of historical data for {len(stations)} stations")
+                    
+                    # Create Redis client for this request
+                    redis_client = redis.Redis(**REDIS_CONFIG, decode_responses=False)
+                    
+                    try:
+                        # Calculate time range
+                        end_time = time.time()
+                        start_time = end_time - window_seconds
+                        
+                        # Build stream keys for only Z channels (like real-time reader)
+                        stream_keys = []
+                        
+                        # Handle special __ALL_Z__ marker for stress testing
+                        if stations == ['__ALL_Z__']:
+                            logger.info(f"Client requested __ALL_Z__ - scanning all Z channel streams in Redis")
+                            # Scan all wave:*:*Z streams (matches HLZ, ENZ, BHZ, etc.)
+                            all_z_keys = [key async for key in redis_client.scan_iter("wave:*:*Z")]
+                            stream_keys = all_z_keys
+                            logger.info(f"Found {len(stream_keys)} Z-channel streams")
+                        else:
+                            # Normal station list - find Z channels for each station
+                            for station in stations:
+                                # Scan for all Z channels for this station (wave:STATION:*Z)
+                                station_z_keys = [key async for key in redis_client.scan_iter(f"wave:{station}:*Z")]
+                                stream_keys.extend(station_z_keys)
+                            logger.info(f"Found {len(stream_keys)} Z-channel streams for {len(stations)} stations")
+                        
+                        logger.info(f"Querying historical data: start_time={start_time}, end_time={end_time}, stations={stations[:5]}...")
+                        logger.info(f"Stream keys (first 5): {[k.decode('utf-8') for k in stream_keys[:5]]}")
+                        
+                        # Fetch historical data using pipeline
+                        fetch_start = time.time()
+                        wave_packets = await get_historical_waves_bulk(
+                            redis_client, 
+                            stream_keys, 
+                            start_time, 
+                            end_time
+                        )
+                        fetch_time = time.time() - fetch_start
+                        
+                        if wave_packets:
+                            # Send multiple packets to client (one per time group)
+                            logger.info(f"Fetched {len(wave_packets)} historical time-grouped packets in {fetch_time:.3f}s")
+                            
+                            for i, wave_batch in enumerate(wave_packets):
+                                timestamp = int(time.time() * 1000)
+                                wave_packet = {
+                                    "waveid": f"historical_{timestamp}_{i}",
+                                    "timestamp": timestamp,
+                                    "data": wave_batch,
+                                }
+                                await websocket.send_json({"event": "historical_data", "data": wave_packet})
+                                # Small delay to avoid overwhelming client
+                                await asyncio.sleep(0.01)
+                            
+                            logger.info(f"Sent {len(wave_packets)} historical wave packets to client")
+                            
+                            # Also fetch and send historical picks
+                            try:
+                                pick_packets = await get_historical_picks(redis_client, start_time, end_time)
+                                if pick_packets:
+                                    logger.info(f"Sending {len(pick_packets)} historical picks to client")
+                                    for pick_packet in pick_packets:
+                                        await websocket.send_json({"event": "pick_packet", "data": pick_packet})
+                                        await asyncio.sleep(0.01)
+                            except Exception as e:
+                                logger.error(f"Error fetching historical picks: {e}")
+                        else:
+                            logger.warning(f"No historical data found for requested stations: {stations[:10]}")
+                            logger.warning(f"Checked stream keys: {[k.decode('utf-8') for k in stream_keys[:10]]}")
+                            await websocket.send_json({"event": "historical_data", "data": {"waveid": "empty", "timestamp": int(time.time() * 1000), "data": {}}})
+                    
+                    except Exception as e:
+                        logger.error(f"Error fetching historical data: {e}")
+                        await websocket.send_json({"event": "error", "data": {"message": f"Failed to fetch historical data: {str(e)}"}})
+                    finally:
+                        await redis_client.close()
 
     except WebSocketDisconnect:
         socket_manager.disconnect(websocket)
@@ -135,7 +219,199 @@ async def websocket_endpoint(websocket: WebSocket):
         socket_manager.disconnect(websocket)
 
 
+
 # --- 從 Redis 讀取並推送資料的背景任務 ---
+async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_time):
+    """
+    Fetch historical waveform data for multiple streams using Redis Pipeline.
+    Uses xrange to query time-based data efficiently.
+    
+    Args:
+        redis_client: Async Redis client
+        stream_keys: List of stream keys (e.g., [b'wave:A001:HLZ', ...])
+        start_time: Start timestamp (seconds)
+        end_time: End timestamp (seconds)
+    
+    Returns:
+        dict: {wave_id: {waveform, pga, startt, endt, samprate}, ...}
+    """
+    if not stream_keys:
+        return {}
+    
+    start_id = f"{int(start_time * 1000)}-0"
+    end_id = f"{int(end_time * 1000)}-0"
+    
+    logger.info(f"get_historical_waves_bulk: Querying {len(stream_keys)} streams from {start_id} to {end_id}")
+    
+    # Use pipeline to batch all xrange queries
+    pipeline = redis_client.pipeline()
+    for key in stream_keys:
+        pipeline.xrange(key, min=start_id, max=end_id)
+    
+    # Execute all commands in one go
+    results = await pipeline.execute()
+    
+    logger.info(f"get_historical_waves_bulk: Pipeline returned {len(results)} results")
+    
+    # Count how many streams have data
+    streams_with_data = sum(1 for r in results if r)
+    logger.info(f"get_historical_waves_bulk: {streams_with_data}/{len(results)} streams have data")
+    
+    # Group chunks by time to send as separate packets
+    # This allows frontend to properly display historical timeline
+    time_grouped_data = {}  # {time_key: [(wave_id, waveform, meta), ...]}
+    
+    for key, messages in zip(stream_keys, results):
+        if not messages:
+            continue
+        
+        key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+        _, station, channel = key_str.split(":")
+        
+        # Process each message chunk separately to preserve timestamps
+        for msg_id, msg_data in messages:
+            waveform_bytes = msg_data.get(b'data')
+            if not waveform_bytes:
+                continue
+            
+            waveform_raw = np.frombuffer(waveform_bytes, dtype=np.int32)
+            
+            # Apply scaling
+            wave_meta = {
+                'station': station, 
+                'channel': channel, 
+                'network': msg_data.get(b'network', b'TW').decode('utf-8')
+            }
+            wave_meta = convert_to_tsmip_legacy_naming(wave_meta)
+            constant = get_wave_constant(wave_meta)
+            waveform_scaled = waveform_raw * constant
+            
+            network = msg_data.get(b'network', b'SM').decode('utf-8')
+            location = msg_data.get(b'location', b'01').decode('utf-8')
+            wave_id = f"{network}.{station}.{location}.{channel}"
+            
+            startt = float(msg_data.get(b'startt', b'0'))
+            endt = float(msg_data.get(b'endt', b'0'))
+            samprate = int(float(msg_data.get(b'samprate', b'100')))
+            
+            # Group by start time (rounded to second) to batch chunks together
+            time_key = int(startt)
+            if time_key not in time_grouped_data:
+                time_grouped_data[time_key] = []
+            
+            time_grouped_data[time_key].append({
+                'wave_id': wave_id,
+                'waveform': waveform_scaled,
+                'startt': startt,
+                'endt': endt,
+                'samprate': samprate
+            })
+    
+    # Process each time group
+    all_packets = []
+    for time_key in sorted(time_grouped_data.keys()):
+        chunk_data = time_grouped_data[time_key]
+        
+        # Batch process waveforms for this time group
+        batch_waveforms = [item['waveform'] for item in chunk_data]
+        
+        try:
+            processed_waveforms = batch_signal_processing(batch_waveforms)
+            
+            wave_batch = {}
+            for i, waveform_processed in enumerate(processed_waveforms):
+                if waveform_processed is None or len(waveform_processed) == 0:
+                    continue
+                
+                item = chunk_data[i]
+                pga = float(np.max(np.abs(waveform_processed)))
+                
+                wave_batch[item['wave_id']] = {
+                    "waveform": waveform_processed.tolist(),
+                    "pga": pga,
+                    "startt": item['startt'],
+                    "endt": item['endt'],
+                    "samprate": item['samprate'],
+                }
+            
+            if wave_batch:
+                all_packets.append(wave_batch)
+                
+        except Exception as e:
+            logger.error(f"Batch processing error for time {time_key}: {e}")
+    
+    logger.info(f"get_historical_waves_bulk: Created {len(all_packets)} time-grouped packets")
+    return all_packets
+
+
+async def get_historical_picks(redis_client, start_time, end_time):
+    """
+    Fetch historical pick data from Redis 'pick' stream.
+    Filters out duplicate picks (Earthworm sends same pick 9 times),
+    keeping only the latest update based on update_sec.
+    
+    Args:
+        redis_client: Async Redis client
+        start_time: Start timestamp (seconds)
+        end_time: End timestamp (seconds)
+    
+    Returns:
+        list: List of deduplicated pick packets
+    """
+    start_id = f"{int(start_time * 1000)}-0"
+    end_id = f"{int(end_time * 1000)}-0"
+    
+    logger.info(f"get_historical_picks: Querying pick stream from {start_id} to {end_id}")
+    
+    # Query pick stream
+    messages = await redis_client.xrange("pick", min=start_id, max=end_id)
+    
+    logger.info(f"get_historical_picks: Found {len(messages)} pick messages")
+    
+    # Deduplicate picks: key = (station, channel, pick_time), value = latest pick
+    pick_map = {}
+    
+    for msg_id, msg_data in messages:
+        raw_data = msg_data.get(b'data')
+        if raw_data:
+            try:
+                # Decode and parse pick data
+                text_data = raw_data.decode('utf-8')
+                json_data = json.loads(text_data)
+                if isinstance(json_data, dict):
+                    # Create unique key from station, channel, and pick time
+                    station = json_data.get('station', '')
+                    channel = json_data.get('channel', '')
+                    pick_time = json_data.get('time', 0)  # Pick arrival time
+                    update_sec = json_data.get('update_sec', 0)  # Update sequence number
+                    
+                    # Use (station, channel, pick_time) as key
+                    pick_key = (station, channel, pick_time)
+                    
+                    # Keep only the latest update (highest update_sec)
+                    if pick_key not in pick_map or update_sec > pick_map[pick_key]['update_sec']:
+                        pick_map[pick_key] = {
+                            'data': json_data,
+                            'update_sec': update_sec
+                        }
+            except Exception as e:
+                logger.debug(f"Error parsing pick message: {e}")
+                continue
+    
+    # Convert deduplicated picks to packets
+    pick_packets = []
+    for pick_info in pick_map.values():
+        packet = {
+            "type": "pick",
+            "content": pick_info['data'],
+            "timestamp": time.time()
+        }
+        pick_packets.append(packet)
+    
+    logger.info(f"get_historical_picks: Deduplicated {len(messages)} messages to {len(pick_packets)} unique picks")
+    return pick_packets
+
+
 async def redis_wave_reader():
     """
     持續從 Redis 讀取所有 'wave:*' stream，批次處理後推送給 WebSocket 管理器。
@@ -153,7 +429,8 @@ async def redis_wave_reader():
             # Periodically scan for new streams
             current_time = time.time()
             if current_time - last_scan_time > scan_interval:
-                stream_keys_bytes = [key async for key in redis_client.scan_iter("wave:*:*")]
+                # Scan only Z-channel streams using wildcard pattern (HLZ, ENZ, BHZ, etc.)
+                stream_keys_bytes = [key async for key in redis_client.scan_iter("wave:*:*Z")]
                 
                 # Add new streams
                 new_streams = 0
@@ -165,9 +442,9 @@ async def redis_wave_reader():
                         new_streams += 1
                 
                 if new_streams > 0:
-                    logger.info(f"Found {len(stream_keys_bytes)} wave streams to listen to.")
+                    logger.info(f"Found {len(stream_keys_bytes)} Z-channel wave streams to listen to.")
                 elif len(stream_ids) == 0:
-                    logger.warning("No 'wave:*' streams found yet. Will retry...")
+                    logger.warning("No Z-channel 'wave:*:*Z' streams found yet. Will retry...")
                 
                 last_scan_time = current_time
             
@@ -184,7 +461,6 @@ async def redis_wave_reader():
 
             start_time = time.time()
             processed_count = 0
-            skipped_count = 0
             
             # Collect waveforms for batch processing
             batch_waveforms = []  # List of (wave_id, waveform_array, pga_compute_needed)
@@ -197,11 +473,7 @@ async def redis_wave_reader():
                 stream_key_str = stream_key.decode('utf-8')
                 _, station, channel = stream_key_str.split(":")
                 
-                # Filter: Only send Z channels to frontend (vertical component)
-                # E/N/Z are all stored in Redis for PyTorch models, but frontend only needs Z
-                if not channel.endswith('Z'):
-                    skipped_count += 1
-                    continue
+                # No need to filter Z channels here - already filtered at scan time with wave:*:*Z pattern
 
                 for msg_id, msg_data in messages:
                     waveform_bytes = msg_data.get(b'data')
@@ -283,7 +555,7 @@ async def redis_wave_reader():
                     "data": wave_batch,
                 }
                 
-                logger.info(f"Processed {processed_count} waves (skipped {skipped_count}) in {processing_time:.3f}s, sending {len(wave_batch)} to clients")
+                logger.info(f"Processed {processed_count} Z-channel waves in {processing_time:.3f}s, sending {len(wave_batch)} to clients")
                 
                 await socket_manager.send_wave_packet(wave_packet)
 

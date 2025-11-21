@@ -10,3 +10,4 @@ params/pfile*
 */node_modules/*
 .pnpm-store/ 
 pnpm-lock.yaml
+__pycache__/

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import WaveformPanel from './WaveformPanel';
 import { LAT_MIN, LAT_MAX } from './constants';
@@ -19,13 +19,20 @@ function RealtimeWaveformDeck({
   latMax
 }) {
   const [renderTrigger, setRenderTrigger] = useState(Date.now());
-  const [baseTime] = useState(Date.now());
   const panelRef = useRef(null);
   const animationFrameRef = useRef(null);
   const [dimensions, setDimensions] = useState(null);
 
   // 時間軸縮放狀態
   const [timeWindow, setTimeWindow] = useState(initialTimeWindow || DEFAULT_DISPLAY_WINDOW);
+
+  // baseTime 固定為組件初始化時往前推 120 秒
+  // 這樣歷史資料會畫在時間軸的前面，實時資料自然接續
+  const baseTime = useMemo(() => {
+    // 固定在組件掛載時的時間，往前推一個時間窗口
+    const now = Date.now();
+    return now - (timeWindow * 1000);
+  }, []); // 空依賴陣列，只在初始化時計算一次
 
   // 使用 requestAnimationFrame 實現平滑滾動
   useEffect(() => {

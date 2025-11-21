@@ -42,6 +42,14 @@ function App() {
     onPickPacket: (data) => {
       console.log('[App] Received pick_packet:', data);
       setPickPackets(prev => [data, ...prev].slice(0, 20));
+    },
+    onHistoricalData: (data) => {
+      console.log('[App] Received historical_data:', data);
+      // Add historical data to wavePackets (it has the same format)
+      if (data && data.data && Object.keys(data.data).length > 0) {
+        setWavePackets(prev => [data, ...prev].slice(0, 10));
+        setLatestWaveTime(new Date().toLocaleString('zh-TW'));
+      }
     }
   });
 
@@ -66,9 +74,20 @@ function App() {
   useEffect(() => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     if (stationsToSubscribe.length > 0) {
+      // Send subscription
       socket.send(JSON.stringify({
         event: 'subscribe_stations',
         data: { stations: stationsToSubscribe }
+      }));
+      
+      // Request historical data for these stations (120 seconds window)
+      console.log(`[App] Requesting historical data for ${stationsToSubscribe.length} stations:`, stationsToSubscribe.slice(0, 10));
+      socket.send(JSON.stringify({
+        event: 'request_historical_data',
+        data: { 
+          stations: stationsToSubscribe,
+          window_seconds: 120
+        }
       }));
     }
     return () => {

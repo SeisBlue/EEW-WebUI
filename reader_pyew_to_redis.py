@@ -195,7 +195,7 @@ def worker_wave(rname, ringid, modid, instid, poll_delay, redis_cfg):
                         # Only trim every 100 writes to reduce overhead
                         skip_trim_counter += 1
                         if skip_trim_counter >= 100:
-                            stream_trim_seconds = 30
+                            stream_trim_seconds = 120
                             min_id_timestamp = int((time.time() - stream_trim_seconds) * 1000)
                             try:
                                 redis_client.execute_command('XTRIM', stream_key, 'MINID', '~',
@@ -294,7 +294,7 @@ def worker_text_or_binary(rname, ringid, modid, instid, msg_type, poll_delay,
                 try:
                     redis_client.xadd(stream_key, msg_data)
                     # Trim stream to keep it manageable (e.g., last 1000 items)
-                    redis_client.xtrim(stream_key, maxlen=1000, approximate=True)
+                    redis_client.xtrim(stream_key, maxlen=10000, approximate=True)
                 except Exception as e:
                     print(f"[{category} worker] redis write failed: {e}", file=sys.stderr)
 
