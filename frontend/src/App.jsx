@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import './App.css';
-import TaiwanMap from './components/TaiwanMapDeck';
+import { TaiwanMapDeck } from './components/MapDeck';
 import { RealtimeWaveformDeck } from './components/WaveformDeck';
 import StationSelection from './components/StationSelection.jsx';
 
@@ -204,7 +204,7 @@ function App() {
                   {view === 'waveform' ? '選擇顯示測站' : '返回波形圖'}
                 </button>
               </div>
-              <TaiwanMap
+              <TaiwanMapDeck
                 stations={mapDisplayStations}
                 stationIntensities={mapStationIntensities}
                 waveDataMap={waveDataMap}
