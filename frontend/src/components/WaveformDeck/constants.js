@@ -32,7 +32,7 @@ export const COLORS = {
     TIME_AXIS: [255, 255, 255, 128],      // 白色，中等透明度
     LABEL_DEFAULT: [224, 224, 224, 255],  // 淺灰色，不透明
     LABEL_INACTIVE: [102, 102, 102, 255], // 深灰色，不透明
-    LABEL_PGA: [76, 175, 80],             // 綠色
+    LABEL_PGA: [255,255,255],             // 白色
     TIME_CURRENT: [76, 175, 80, 255],     // 綠色，不透明
     TIME_RELATIVE: [144, 202, 249, 255],  // 藍色，不透明
 };
