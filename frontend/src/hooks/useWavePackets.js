@@ -126,7 +126,6 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
 
       // Clean up old data based on retention window
       const cutoffTime = now - DATA_RETENTION_WINDOW * 1000;
-      const recentCutoff = now - 10 * 1000;
 
       Object.keys(updated).forEach(stationCode => {
         const stationData = updated[stationCode];
@@ -144,7 +143,7 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
         // Update statistics by removing old points
         const stats = stationData.recentStats;
         let statsChanged = false;
-        while (stats.points.length > 0 && stats.points[0].timestamp < recentCutoff) {
+        while (stats.points.length > 0 && stats.points[0].timestamp < cutoffTime) {
           const removedPoint = stats.points.shift();
           stats.totalSumSquares -= removedPoint.sumSquares;
           stats.totalCount -= removedPoint.count;
