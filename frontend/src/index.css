@@ -8,7 +8,8 @@
   /* Blue Scale */
   --blue-30: #90caf9;
   --blue-50: #64b5f6;
-  --blue-60: #5568d3; /* For button hover */
+  --blue-60: #5568d3;
+  /* For button hover */
   --blue-70: #2a5298;
   --blue-80: #1e3c72;
 
@@ -28,13 +29,15 @@
   --teal-30: #95e1d3;
 
   /* Purple Scale */
-  --purple-60: #6b4ba2; /* For button hover */
+  --purple-60: #6b4ba2;
+  /* For button hover */
 
   /* Gray Scale */
   --gray-10: #e0e0e0;
   --gray-30: #b0b0b0;
   --gray-40: #999999;
-  --gray-50: #94a3b8; /* For unknown intensity */
+  --gray-50: #94a3b8;
+  /* For unknown intensity */
   --gray-60: #666666;
   --gray-90: #0a0e27;
   --gray-95: #0b1724;
@@ -139,6 +142,20 @@
   --radius-lg: 12px;
   --radius-pill: 20px;
 
+  /* 字體大小 */
+  --font-size-xs: 0.75rem;
+  /* 12px */
+  --font-size-sm: 0.875rem;
+  /* 14px */
+  --font-size-base: 1rem;
+  /* 16px */
+  --font-size-lg: 1.125rem;
+  /* 18px */
+  --font-size-xl: 1.25rem;
+  /* 20px */
+  --font-size-2xl: 1.5rem;
+  /* 24px */
+
   /* 間距 */
   --spacing-xs: 0.5rem;
   --spacing-sm: 1rem;
@@ -182,7 +199,9 @@
 }
 
 /* Reset box-sizing */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -192,6 +211,7 @@ a {
   text-decoration: inherit;
   transition: color var(--transition-fast);
 }
+
 a:hover {
   color: var(--color-primary-light);
 }
@@ -233,9 +253,11 @@ button {
   transition: border-color var(--transition-fast);
   color: var(--color-text-primary);
 }
+
 button:hover {
   border-color: var(--color-primary);
 }
+
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;

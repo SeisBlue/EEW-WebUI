@@ -44,14 +44,14 @@
 
 .waveform-panel .panel-header h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--font-size-base);
   font-weight: 600;
 }
 
 .waveform-panel .station-count {
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   background: var(--color-bg-glass);
-  padding: var(--radius-sm) var(--radius-md);
+  padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-pill);
 }
 
@@ -65,7 +65,7 @@
 }
 
 /* 确保 DeckGL 内部元素不会逃逸 */
-.waveform-panel .deckgl-container > div {
+.waveform-panel .deckgl-container>div {
   position: absolute !important;
   left: 0 !important;
   top: 0 !important;
@@ -84,4 +84,3 @@
   -webkit-backface-visibility: hidden;
   -webkit-transform: translateZ(0);
 }
-
