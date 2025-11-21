@@ -6,13 +6,23 @@ from loguru import logger
 
 class RedisAdapter:
     def __init__(self, host='redis', port=6379, db=0):
+        self.host = host
+        self.port = port
+        self.db = db
+        self.redis_client = None
+        self.connect()
+
+    def connect(self):
         try:
-            self.redis_client = redis.Redis(host=host, port=port, db=db, decode_responses=False)
+            # Create a new client instance
+            self.redis_client = redis.Redis(host=self.host, port=self.port, db=self.db, decode_responses=False)
             self.redis_client.ping()
             logger.info("Successfully connected to Redis.")
+            return True
         except Exception as e:
             logger.error(f"Could not connect to Redis: {e}")
             self.redis_client = None
+            return False
 
     def get_waveform_data(self, station, channel, start_time, end_time):
         """
@@ -193,10 +203,19 @@ class RedisAdapter:
 if __name__ == '__main__':
     # Example usage:
     adapter = RedisAdapter()
-    if adapter.redis_client:
-        logger.info("Starting continuous monitoring loop (Ctrl+C to stop)...")
-        try:
-            while True:
+    
+    logger.info("Starting continuous monitoring loop (Ctrl+C to stop)...")
+    try:
+        while True:
+            # Auto-reconnect logic
+            if not adapter.redis_client:
+                logger.info("Attempting to connect to Redis...")
+                if not adapter.connect():
+                    logger.warning("Connection failed. Retrying in 5 seconds...")
+                    time.sleep(5)
+                    continue
+            
+            try:
                 time.sleep(1)
                 end_timestamp = time.time()
                 
@@ -256,5 +275,13 @@ if __name__ == '__main__':
                     
                     logger.info(f"Station {sta}: {', '.join(channel_counts)}")
                 
-        except KeyboardInterrupt:
-            logger.info("Stopping monitoring loop.")
+            except (redis.ConnectionError, redis.TimeoutError) as e:
+                logger.error(f"Redis connection error: {e}")
+                adapter.redis_client = None # Force reconnect
+                time.sleep(1)
+            except Exception as e:
+                logger.error(f"Unexpected error in main loop: {e}")
+                time.sleep(1)
+                
+    except KeyboardInterrupt:
+        logger.info("Stopping monitoring loop.")
