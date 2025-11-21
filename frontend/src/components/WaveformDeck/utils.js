@@ -25,8 +25,8 @@ export function calculateStationYPosition(latitude, minLat, maxLat, availableHei
 export function calculateDownsampleFactor(timeWindow, effectiveSamprate, waveWidth) {
     // 總點數 = 時間窗口 * 採樣率
     const totalPoints = timeWindow * effectiveSamprate;
-    // 目標點數 = 波形寬度 * 0.5（每像素約 0.5 個點）
-    const targetPoints = waveWidth * 0.5;
+    // 目標點數 = 波形寬度 * 2（每像素約 2 個點）
+    const targetPoints = waveWidth * 2;
     // 降採樣因子
     const calculatedFactor = Math.floor(totalPoints / targetPoints);
     return Math.max(1, calculatedFactor);
