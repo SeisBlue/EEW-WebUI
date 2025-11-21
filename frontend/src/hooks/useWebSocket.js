@@ -74,6 +74,10 @@ export function useWebSocket({ onWavePacket, onPickPacket, onHistoricalData }) {
         } else if (message.event === 'historical_data') {
           console.log('[useWebSocket] Received historical_data:', message.data);
           onHistoricalDataRef.current?.(message.data);
+        } else if (message.event === 'historical_picks_batch') {
+          console.log(`[useWebSocket] Received ${message.data.count} historical picks in batch`);
+          // 將所有 picks 加入 buffer，跟即時 picks 一起處理
+          pickPacketBuffer.current.push(...message.data.picks);
         }
       };
     };

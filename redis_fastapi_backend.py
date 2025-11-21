@@ -248,10 +248,15 @@ async def websocket_endpoint(websocket: WebSocket):
                         try:
                             pick_packets = await get_historical_picks(redis_client, start_time, end_time)
                             if pick_packets:
-                                logger.info(f"Sending {len(pick_packets)} historical picks to client")
-                                for pick_packet in pick_packets:
-                                    await websocket.send_json({"event": "pick_packet", "data": pick_packet})
-                                    await asyncio.sleep(0.1)
+                                logger.info(f"Sending {len(pick_packets)} historical picks in one batch to client")
+                                # 一次發送所有 picks
+                                await websocket.send_json({
+                                    "event": "historical_picks_batch", 
+                                    "data": {
+                                        "picks": pick_packets,
+                                        "count": len(pick_packets)
+                                    }
+                                })
                         except Exception as e:
                             logger.error(f"Error fetching historical picks: {e}")
                     else:
@@ -313,7 +318,7 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
     
     # Group chunks by 5-second windows to reduce packet count
     # This balances between data granularity and transmission efficiency
-    TIME_WINDOW = 5  # seconds
+    TIME_WINDOW = 30  # seconds
     time_grouped_data = {}  # {time_window_key: [chunk, ...]}
     
     for key, messages in zip(stream_keys, results):
@@ -656,7 +661,7 @@ async def redis_wave_reader():
                 logger.info(f"Processed {processed_count} Z-channel waves in {processing_time:.3f}s, sending {len(wave_batch)} to clients")
                 
                 await socket_manager.send_wave_packet(wave_packet)
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.33)
 
         except Exception as e:
             logger.error(f"Error in redis_wave_reader: {e}")
