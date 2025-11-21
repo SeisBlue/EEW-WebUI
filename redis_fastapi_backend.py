@@ -316,9 +316,9 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
     streams_with_data = sum(1 for r in results if r)
     logger.info(f"get_historical_waves_bulk: {streams_with_data}/{len(results)} streams have data")
     
-    # Group chunks by 5-second windows to reduce packet count
+    # Group chunks by 10-second windows to reduce packet count
     # This balances between data granularity and transmission efficiency
-    TIME_WINDOW = 30  # seconds
+    TIME_WINDOW = 10  # seconds
     time_grouped_data = {}  # {time_window_key: [chunk, ...]}
     
     for key, messages in zip(stream_keys, results):
@@ -354,7 +354,7 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
             endt = float(msg_data.get(b'endt', b'0'))
             samprate = int(float(msg_data.get(b'samprate', b'100')))
             
-            # Group by 5-second windows
+            # Group by 10-second windows
             time_window_key = int(startt / TIME_WINDOW)
             if time_window_key not in time_grouped_data:
                 time_grouped_data[time_window_key] = []
