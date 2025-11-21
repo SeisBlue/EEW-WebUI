@@ -131,11 +131,14 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
               count: waveform.length
             });
             stationData.recentStats.totalSumSquares += sumSquares;
-            stationData.recentStats.totalMaxAbs = Math.max(
-              stationData.recentStats.totalMaxAbs,
-              maxAbs
-            );
             stationData.recentStats.totalCount += waveform.length;
+
+            // Update display scale immediately
+            // Use RMS * 5 for robust scaling that ignores single spikes
+            if (stationData.recentStats.totalCount > 0) {
+              const rms = Math.sqrt(stationData.recentStats.totalSumSquares / stationData.recentStats.totalCount);
+              stationData.displayScale = Math.max(rms * 5, 0.05);
+            }
           }
         });
       });
@@ -200,7 +203,8 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
           // Calculate display scale based on recent statistics
           if (stats.totalCount > 0) {
             const rms = Math.sqrt(stats.totalSumSquares / stats.totalCount);
-            newStationData.displayScale = Math.max(rms * 4, stats.totalMaxAbs * 0.3, 0.05);
+            // Use RMS * 5 for robust scaling that ignores single spikes
+            newStationData.displayScale = Math.max(rms * 5, 0.05);
           } else if (newStationData.dataPoints.length === 0) {
             newStationData.displayScale = 1.0;
           }

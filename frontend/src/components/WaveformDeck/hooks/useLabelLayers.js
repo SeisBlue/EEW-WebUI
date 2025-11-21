@@ -52,16 +52,14 @@ export function useLabelLayers({
             let labelFontWeight = 'normal';
 
             // 1. 確定推出狀態
-            if (hasPicks || intensityValue >= 4) {
+            if (hasPicks) {
                 stationLabelOffset = -40;
                 pgaLabelOffset = 60;
             }
 
             // 2. 確定文字透明度
-            if (intensityValue < 2 && !hasPicks) {
+            if (!hasPicks) {
                 textAlpha = 50;
-            } else if (intensityValue < 3 && !hasPicks) {
-                textAlpha = 100;
             } else {
                 textAlpha = 255;
             }

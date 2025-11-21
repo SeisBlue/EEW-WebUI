@@ -21,8 +21,8 @@ export const WAVE_HEIGHT = 45;
 // 顏色定義
 export const COLORS = {
     BASELINE: [255, 255, 255, 26],        // 白色，透明度低
-    WAVEFORM_ACTIVE: [76, 175, 80, 230],  // 綠色，高透明度
-    WAVEFORM_DIM: [76, 175, 80, 70],      // 綠色，低透明度
+    WAVEFORM_ACTIVE: [76, 175, 80, 150],  // 綠色，高透明度
+    WAVEFORM_DIM: [76, 175, 80, 60],      // 綠色，低透明度
     PICK_MARKER: [255, 235, 59, 200],     // 黃色，中等透明度
     PICK_LABEL: [255, 235, 59, 255],      // 黃色，不透明
     PICK_BG: [0, 0, 0, 255],              // 黑色，不透明

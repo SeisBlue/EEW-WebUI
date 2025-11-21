@@ -69,21 +69,16 @@ export function useWaveformLayers({
 
         // 計算速度：像素/毫秒
         const speed = waveWidth / (timeWindow * 1000);
-
-        // 根據 PGA 計算震度等級
-        const pga = waveData.lastPga || 0;
-        const intensityStr = pgaToIntensity(pga);
-        const intensityValue = getIntensityValue(intensityStr);
         const hasPicks = waveData.picks && waveData.picks.length > 0;
 
         // 確定波形樣式
         let waveColor;
         let lineWidth;
 
-        if (hasPicks || intensityValue >= 4) {
-          // 有 pick 或震度 4+ 使用正常顏色和粗線
+        if (hasPicks) {
+          // 有 pick 使用正常顏色和粗線
           waveColor = COLORS.WAVEFORM_ACTIVE;
-          lineWidth = 1.0;
+          lineWidth = 0.5;
         } else {
           // 否則使用淡色和細線
           waveColor = COLORS.WAVEFORM_DIM;

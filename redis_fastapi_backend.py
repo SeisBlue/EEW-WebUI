@@ -22,7 +22,7 @@ REDIS_CONFIG = {
 # --- 波形降採樣配置 ---
 # 控制傳送資料點數的倍數：資料點數 = resolution_width * POINTS_PER_PIXEL
 # 預設 2.0 表示傳送解析度兩倍的資料點，可調整以平衡畫質與傳輸量
-POINTS_PER_PIXEL = 1.0
+POINTS_PER_PIXEL = 2.0
 FIXED_TIME_WINDOW = 120  # 固定時間窗口（秒）
 
 app = FastAPI()
@@ -316,10 +316,8 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
     streams_with_data = sum(1 for r in results if r)
     logger.info(f"get_historical_waves_bulk: {streams_with_data}/{len(results)} streams have data")
     
-    # Group chunks by 10-second windows to reduce packet count
-    # This balances between data granularity and transmission efficiency
-    TIME_WINDOW = 10  # seconds
-    time_grouped_data = {}  # {time_window_key: [chunk, ...]}
+    # Group all chunks by station first (to process full duration at once)
+    station_data_map = {}  # {wave_id: {'chunks': [], 'meta': ...}}
     
     for key, messages in zip(stream_keys, results):
         if not messages:
@@ -354,94 +352,116 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
             endt = float(msg_data.get(b'endt', b'0'))
             samprate = int(float(msg_data.get(b'samprate', b'100')))
             
-            # Group by 10-second windows
-            time_window_key = int(startt / TIME_WINDOW)
-            if time_window_key not in time_grouped_data:
-                time_grouped_data[time_window_key] = []
+            if wave_id not in station_data_map:
+                station_data_map[wave_id] = {
+                    'chunks': [],
+                    'samprate': samprate
+                }
             
-            time_grouped_data[time_window_key].append({
-                'wave_id': wave_id,
+            station_data_map[wave_id]['chunks'].append({
                 'waveform': waveform_scaled,
                 'startt': startt,
-                'endt': endt,
-                'samprate': samprate
+                'endt': endt
             })
     
-    if not time_grouped_data:
+    if not station_data_map:
         return []
     
-    # Process each 5-second window
+    # Concatenate and prepare for batch processing
+    wave_ids = []
+    full_waveforms = []
+    wave_start_times = []
+    wave_samprates = []
+    
+    for wave_id, data in station_data_map.items():
+        chunks = data['chunks']
+        # Sort by time
+        chunks.sort(key=lambda c: c['startt'])
+        
+        # Concatenate
+        full_waveform = np.concatenate([c['waveform'] for c in chunks])
+        
+        wave_ids.append(wave_id)
+        full_waveforms.append(full_waveform)
+        wave_start_times.append(chunks[0]['startt'])
+        wave_samprates.append(data['samprate'])
+        
+    # Batch process the FULL waveforms
+    try:
+        processed_waveforms = batch_signal_processing(full_waveforms)
+        
+        # Apply Taper to the start of each waveform to remove filter spike
+        # Taper first 2 seconds (200 samples at 100Hz)
+        for i, waveform in enumerate(processed_waveforms):
+            if waveform is None or len(waveform) == 0:
+                continue
+                
+            taper_len = min(len(waveform), 200)  # 2 seconds
+            if taper_len > 0:
+                # Simple linear taper (0 to 1)
+                taper = np.linspace(0, 1, taper_len)
+                waveform[:taper_len] = waveform[:taper_len] * taper
+                
+    except Exception as e:
+        logger.error(f"Batch processing error in historical data: {e}")
+        return []
+
+    # Slice back into 5-second packets for transmission
+    TIME_WINDOW = 5  # seconds
+    packet_map = {}  # {time_key: {wave_id: data}}
+    
+    for i, wave_id in enumerate(wave_ids):
+        waveform = processed_waveforms[i]
+        if waveform is None or len(waveform) == 0:
+            continue
+            
+        start_time = wave_start_times[i]
+        samprate = wave_samprates[i]
+        
+        # Calculate downsample factor once
+        downsample_factor = calculate_downsample_factor(samprate, resolution_width)
+        
+        # Slice into windows
+        total_samples = len(waveform)
+        samples_per_window = int(TIME_WINDOW * samprate)
+        
+        for j in range(0, total_samples, samples_per_window):
+            chunk_start_idx = j
+            chunk_end_idx = min(j + samples_per_window, total_samples)
+            
+            chunk_waveform = waveform[chunk_start_idx:chunk_end_idx]
+            
+            chunk_start_time = start_time + (chunk_start_idx / samprate)
+            chunk_end_time = start_time + (chunk_end_idx / samprate)
+            
+            # Downsample this chunk
+            downsampled_chunk = downsample_waveform(chunk_waveform, downsample_factor)
+            
+            pga = float(np.max(np.abs(downsampled_chunk))) if len(downsampled_chunk) > 0 else 0
+            
+            # Group by time window key
+            time_key = int(chunk_start_time / TIME_WINDOW)
+            if time_key not in packet_map:
+                packet_map[time_key] = {}
+                
+            packet_map[time_key][wave_id] = {
+                "waveform": downsampled_chunk.tolist(),
+                "pga": pga,
+                "startt": chunk_start_time,
+                "endt": chunk_end_time,
+                "samprate": samprate,
+                "effective_samprate": samprate / downsample_factor,
+                "original_length": len(chunk_waveform),
+                "downsampled_length": len(downsampled_chunk),
+                "downsample_factor": downsample_factor
+            }
+            
+    # Convert map to list of packets
     all_packets = []
-    for time_key in sorted(time_grouped_data.keys()):
-        chunk_list = time_grouped_data[time_key]
+    for time_key in sorted(packet_map.keys()):
+        all_packets.append(packet_map[time_key])
         
-        # Group chunks by station and concatenate waveforms
-        station_chunks = {}  # {wave_id: [chunks...]}
-        for chunk in chunk_list:
-            wave_id = chunk['wave_id']
-            if wave_id not in station_chunks:
-                station_chunks[wave_id] = []
-            station_chunks[wave_id].append(chunk)
-        
-        # Concatenate chunks for each station
-        chunks_to_process = []
-        for wave_id, chunks in station_chunks.items():
-            # Sort by startt to maintain chronological order
-            chunks.sort(key=lambda c: c['startt'])
-            
-            # Concatenate waveforms
-            concatenated_waveform = np.concatenate([c['waveform'] for c in chunks])
-            
-            # Use first chunk's startt and last chunk's endt
-            chunks_to_process.append({
-                'wave_id': wave_id,
-                'waveform': concatenated_waveform,
-                'startt': chunks[0]['startt'],
-                'endt': chunks[-1]['endt'],
-                'samprate': chunks[0]['samprate']
-            })
-        
-        # Batch process concatenated waveforms
-        batch_waveforms = [chunk['waveform'] for chunk in chunks_to_process]
-        
-        try:
-            processed_waveforms = batch_signal_processing(batch_waveforms)
-            
-            # Build packet for this 5-second window
-            wave_batch = {}
-            for i, waveform_processed in enumerate(processed_waveforms):
-                if waveform_processed is None or len(waveform_processed) == 0:
-                    continue
-                
-                chunk = chunks_to_process[i]
-                samprate = chunk['samprate']
-                
-                # 執行降採樣（與即時資料處理邏輯一致）
-                downsample_factor = calculate_downsample_factor(samprate, resolution_width)
-                downsampled_waveform = downsample_waveform(waveform_processed, downsample_factor)
-                
-                pga = float(np.max(np.abs(downsampled_waveform)))
-                
-                wave_batch[chunk['wave_id']] = {
-                    "waveform": downsampled_waveform.tolist(),
-                    "pga": pga,
-                    "startt": chunk['startt'],
-                    "endt": chunk['endt'],
-                    "samprate": chunk['samprate'],  # 保留原始採樣率
-                    "effective_samprate": chunk['samprate'] / downsample_factor,  # 降採樣後的有效採樣率
-                    "original_length": len(waveform_processed),
-                    "downsampled_length": len(downsampled_waveform),
-                    "downsample_factor": downsample_factor
-                }
-
-            
-            if wave_batch:
-                all_packets.append(wave_batch)
-                
-        except Exception as e:
-            logger.error(f"Batch processing error for time window {time_key}: {e}")
-
-    logger.info(f"get_historical_waves_bulk: Grouped into {len(all_packets)} 5-second window packets")
+    logger.info(f"get_historical_waves_bulk: Processed {len(wave_ids)} stations, sliced into {len(all_packets)} packets")
     return all_packets
 
 
