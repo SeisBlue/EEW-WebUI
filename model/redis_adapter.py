@@ -197,74 +197,64 @@ if __name__ == '__main__':
         logger.info("Starting continuous monitoring loop (Ctrl+C to stop)...")
         try:
             while True:
+                time.sleep(1)
                 end_timestamp = time.time()
                 
                 # 1. Fetch picks from the last 10 seconds
                 start_timestamp_picks = end_timestamp - 10
-                # logger.info(f"Fetching picks from {start_timestamp_picks} to {end_timestamp}")
                 picks = adapter.get_picks(start_timestamp_picks, end_timestamp)
                 
-                if picks:
-                    # 2. Extract unique stations from picks
-                    target_stations = set()
-                    for p in picks:
-                        # Try common keys for station name (adjust based on actual pick format)
-                        # Assuming 'station' or 'sta' key exists in the pick dictionary
-                        sta = p.get('station') or p.get('sta')
-                        if sta:
-                            target_stations.add(sta)
-                        else:
-                            # Fallback: check if it's nested or has different structure
-                            logger.warning(f"Could not extract station from pick: {p}")
+                if not picks:
+                    continue
 
-                    logger.info(f"Successfully fetched {len(picks)} picks from {len(target_stations)} unique stations.")
-
-                    if target_stations:
-                        logger.info(f"Found stations in picks: {target_stations}")
-                        
-                        # 3. Fetch 30 seconds of wave data for these stations (Optimized)
-                        start_timestamp_wave = end_timestamp - 30
-                        
-                        fetch_start = time.time()
-                        # Assume standard channels for optimization. 
-                        # If you need more, add them to the list e.g. ['HLZ', 'HLN', 'HLE', 'EHZ']
-                        headers, data_matrix = adapter.fetch_station_waves_optimized(
-                            list(target_stations), 
-                            start_timestamp_wave, 
-                            end_timestamp,
-                            channels=['HLZ', 'HLN', 'HLE']
-                        )
-                        fetch_time = time.time() - fetch_start
-                        
-                        if len(headers) > 0:
-                            logger.info(f"Fetched {len(headers)} stations in {fetch_time:.4f}s. Data shape: {data_matrix.shape}")
-                            
-                            # Optional: Log summary per station to verify
-                            for i, header in enumerate(headers):
-                                sta = header['station']
-                                # Data is (Time, Channels) for this station
-                                station_data = data_matrix[i]
-                                
-                                # Count non-zeros per channel to verify data presence
-                                channel_counts = []
-                                channels = ['HLZ', 'HLN', 'HLE']
-                                for j, ch in enumerate(channels):
-                                    # Count non-zero elements as a proxy for "valid samples" 
-                                    # (since we padded with zeros, this is a rough check)
-                                    count = np.count_nonzero(station_data[:, j])
-                                    channel_counts.append(f"{ch}={count}")
-                                
-                                logger.info(f"Station {sta}: {', '.join(channel_counts)}")
-                        else:
-                            logger.warning("No wave data found for target stations.")
+                # 2. Extract unique stations from picks
+                target_stations = set()
+                for p in picks:
+                    sta = p.get('station') or p.get('sta')
+                    if sta:
+                        target_stations.add(sta)
                     else:
-                        logger.warning("No valid stations extracted from picks.")
-                else:
-                    # Optional: log a heartbeat or silence
-                    # logger.debug("No picks found in the last 10 seconds.")
-                    pass
+                        logger.warning(f"Could not extract station from pick: {p}")
+
+                logger.info(f"Successfully fetched {len(picks)} picks from {len(target_stations)} unique stations.")
+
+                if not target_stations:
+                    logger.warning("No valid stations extracted from picks.")
+                    continue
+
+                logger.info(f"Found stations in picks: {target_stations}")
                 
-                time.sleep(1)
+                # 3. Fetch 30 seconds of wave data for these stations (Optimized)
+                start_timestamp_wave = end_timestamp - 30
+                
+                fetch_start = time.time()
+                headers, data_matrix = adapter.fetch_station_waves_optimized(
+                    list(target_stations), 
+                    start_timestamp_wave, 
+                    end_timestamp,
+                    channels=['HLZ', 'HLN', 'HLE']
+                )
+                fetch_time = time.time() - fetch_start
+                
+                if len(headers) == 0:
+                    logger.warning("No wave data found for target stations.")
+                    continue
+
+                logger.info(f"Fetched {len(headers)} stations in {fetch_time:.4f}s. Data shape: {data_matrix.shape}")
+                
+                # Optional: Log summary per station to verify
+                for i, header in enumerate(headers):
+                    sta = header['station']
+                    station_data = data_matrix[i]
+                    
+                    # Count non-zeros per channel to verify data presence
+                    channel_counts = []
+                    channels = ['HLZ', 'HLN', 'HLE']
+                    for j, ch in enumerate(channels):
+                        count = np.count_nonzero(station_data[:, j])
+                        channel_counts.append(f"{ch}={count}")
+                    
+                    logger.info(f"Station {sta}: {', '.join(channel_counts)}")
                 
         except KeyboardInterrupt:
             logger.info("Stopping monitoring loop.")
