@@ -189,7 +189,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             }
                             await websocket.send_json({"event": "historical_data", "data": wave_packet})
                             # Small delay to avoid overwhelming client
-                            await asyncio.sleep(0.01)
+                            await asyncio.sleep(0.1)
                         
                         logger.info(f"Sent {len(wave_packets)} historical wave packets to client")
                         
@@ -200,7 +200,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 logger.info(f"Sending {len(pick_packets)} historical picks to client")
                                 for pick_packet in pick_packets:
                                     await websocket.send_json({"event": "pick_packet", "data": pick_packet})
-                                    await asyncio.sleep(0.01)
+                                    await asyncio.sleep(0.1)
                         except Exception as e:
                             logger.error(f"Error fetching historical picks: {e}")
                     else:
@@ -372,7 +372,7 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
                 
         except Exception as e:
             logger.error(f"Batch processing error for time window {time_key}: {e}")
-    
+
     logger.info(f"get_historical_waves_bulk: Grouped into {len(all_packets)} 5-second window packets")
     return all_packets
 
