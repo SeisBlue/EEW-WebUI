@@ -38,9 +38,9 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
           // Initialize or copy existing station data
           // Note: We modify the 'updated' object in place for the batch
           let stationData = updated[stationCode];
-          
+
           if (!stationData) {
-             stationData = {
+            stationData = {
               dataPoints: [],
               pgaHistory: [],
               lastPga: 0,
@@ -61,7 +61,7 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
             // Since we are inside setWaveDataMap updater, 'updated' is a new object.
             // We need to clone the stationData if it comes from 'prev'.
             if (stationData === prev[stationCode]) {
-               stationData = {
+              stationData = {
                 ...stationData,
                 dataPoints: [...stationData.dataPoints],
                 pgaHistory: [...stationData.pgaHistory],
@@ -103,6 +103,7 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
             endTimestamp: packetEndTime,
             values: waveform,
             samprate: samprate,
+            effective_samprate: wavePacketData.effective_samprate,  // 保存後端計算的有效採樣率
             isGap: false
           });
 
@@ -131,7 +132,7 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
             });
             stationData.recentStats.totalSumSquares += sumSquares;
             stationData.recentStats.totalMaxAbs = Math.max(
-              stationData.recentStats.totalMaxAbs, 
+              stationData.recentStats.totalMaxAbs,
               maxAbs
             );
             stationData.recentStats.totalCount += waveform.length;
@@ -154,7 +155,7 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
 
         Object.keys(updated).forEach(stationCode => {
           const stationData = updated[stationCode];
-          
+
           // Check if cleanup is needed to avoid unnecessary copying
           const needsCleanup = (
             (stationData.dataPoints.length > 0 && stationData.dataPoints[0].endTimestamp < cutoffTime) ||
@@ -190,7 +191,7 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
 
           if (statsChanged) {
             stats.totalMaxAbs = stats.points.reduce(
-              (max, p) => Math.max(max, p.maxAbs), 
+              (max, p) => Math.max(max, p.maxAbs),
               0
             );
           }

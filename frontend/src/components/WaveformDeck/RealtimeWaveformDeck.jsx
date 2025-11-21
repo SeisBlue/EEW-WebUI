@@ -4,17 +4,13 @@ import WaveformPanel from './WaveformPanel';
 import { LAT_MIN, LAT_MAX } from './constants';
 import './RealtimeWaveformDeck.css';
 
-const DEFAULT_DISPLAY_WINDOW = 120;
-const MIN_TIME_WINDOW = 1;   // 最小時間窗口：1 秒
-const MAX_TIME_WINDOW = 120; // 最大時間窗口：120 秒
+const DEFAULT_DISPLAY_WINDOW = 120;  // 固定時間窗口：120 秒
 
 function RealtimeWaveformDeck({
   waveDataMap,
   displayStations,
   stationMap,
   title,
-  timeWindow: initialTimeWindow,
-  onTimeWindowChange,
   latMin,
   latMax
 }) {
@@ -23,15 +19,12 @@ function RealtimeWaveformDeck({
   const animationFrameRef = useRef(null);
   const [dimensions, setDimensions] = useState(null);
 
-  // 時間軸縮放狀態
-  const [timeWindow, setTimeWindow] = useState(initialTimeWindow || DEFAULT_DISPLAY_WINDOW);
-
   // baseTime 固定為組件初始化時往前推 120 秒
   // 這樣歷史資料會畫在時間軸的前面，實時資料自然接續
   const baseTime = useMemo(() => {
-    // 固定在組件掛載時的時間，往前推一個時間窗口
+    // 固定在組件掛載時的時間，往前推 120 秒
     const now = Date.now();
-    return now - (timeWindow * 1000);
+    return now - (DEFAULT_DISPLAY_WINDOW * 1000);
   }, []); // 空依賴陣列，只在初始化時計算一次
 
   // 使用 requestAnimationFrame 實現平滑滾動
@@ -81,39 +74,6 @@ function RealtimeWaveformDeck({
     };
   }, []);
 
-  // 滾輪縮放時間軸
-  useEffect(() => {
-    const handleWheel = (e) => {
-      if (!panelRef.current?.contains(e.target)) return;
-
-      e.preventDefault();
-
-      // 計算縮放因子
-      const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
-
-      setTimeWindow(prev => {
-        const newWindow = prev * zoomFactor;
-        const clamped = Math.max(MIN_TIME_WINDOW, Math.min(MAX_TIME_WINDOW, newWindow));
-
-        if (onTimeWindowChange) {
-          onTimeWindowChange(clamped);
-        }
-
-        return clamped;
-      });
-    };
-
-    const panel = panelRef.current;
-    if (panel) {
-      panel.addEventListener('wheel', handleWheel, { passive: false });
-    }
-
-    return () => {
-      if (panel) {
-        panel.removeEventListener('wheel', handleWheel);
-      }
-    };
-  }, [onTimeWindowChange]);
 
   return (
     <div className="realtime-waveform geographic">
@@ -129,7 +89,7 @@ function RealtimeWaveformDeck({
             panelWidth={dimensions.width}
             panelHeight={dimensions.height}
             renderTrigger={renderTrigger}
-            timeWindow={timeWindow}
+            timeWindow={DEFAULT_DISPLAY_WINDOW}
             baseTime={baseTime}
           />
         )}
@@ -143,10 +103,8 @@ RealtimeWaveformDeck.propTypes = {
   displayStations: PropTypes.array.isRequired,
   stationMap: PropTypes.object.isRequired,
   title: PropTypes.string.isRequired,
-  timeWindow: PropTypes.number.isRequired,
   latMin: PropTypes.number,
-  latMax: PropTypes.number,
-  onTimeWindowChange: PropTypes.func
+  latMax: PropTypes.number
 };
 
 export default RealtimeWaveformDeck;

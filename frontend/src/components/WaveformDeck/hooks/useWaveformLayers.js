@@ -4,7 +4,6 @@ import { pgaToIntensity, getIntensityValue } from '../../../utils/intensity';
 import { SAMPLE_RATE, WAVE_HEIGHT, COLORS } from '../constants';
 import {
   calculateStationYPosition,
-  calculateDownsampleFactor,
   calculateWaveformX,
   calculateWaveformY,
   calculatePickXPosition
@@ -99,19 +98,13 @@ export function useWaveformLayers({
 
           const pathPoints = [];
 
-          // 使用實際的採樣率和時間戳
-          const effectiveSamprate = samprate || SAMPLE_RATE;
+          // 使用有效採樣率（後端降採樣後的實際採樣率）
+          // 如果後端有提供 effective_samprate 就用它，否則用原始 samprate
+          const effectiveSamprate = point.effective_samprate || samprate || SAMPLE_RATE;
           const len = values.length;
 
-          // 動態降採樣
-          const downsampleFactor = calculateDownsampleFactor(
-            timeWindow,
-            effectiveSamprate,
-            waveWidth
-          );
-
-          // 優化：使用 for 循環代替 forEach，減少函數調用開銷
-          for (let idx = 0; idx < len; idx += downsampleFactor) {
+          // 後端已降採樣，前端直接渲染所有點
+          for (let idx = 0; idx < len; idx++) {
             // 計算這個樣本點的實際時間
             const sampleTime = timestamp + (idx / effectiveSamprate) * 1000;
 

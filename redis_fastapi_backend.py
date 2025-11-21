@@ -19,6 +19,12 @@ REDIS_CONFIG = {
     "db": 0,
 }
 
+# --- 波形降採樣配置 ---
+# 控制傳送資料點數的倍數：資料點數 = resolution_width * POINTS_PER_PIXEL
+# 預設 2.0 表示傳送解析度兩倍的資料點，可調整以平衡畫質與傳輸量
+POINTS_PER_PIXEL = 1.0
+FIXED_TIME_WINDOW = 120  # 固定時間窗口（秒）
+
 app = FastAPI()
 background_tasks = set()
 
@@ -27,6 +33,7 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
         self.subscribed_stations: Dict[WebSocket, Set[str]] = {}
+        self.client_resolutions: Dict[WebSocket, int] = {}  # 儲存每個客戶端的螢幕解析度
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -40,6 +47,8 @@ class ConnectionManager:
         self.active_connections.remove(websocket)
         if websocket in self.subscribed_stations:
             del self.subscribed_stations[websocket]
+        if websocket in self.client_resolutions:
+            del self.client_resolutions[websocket]
         logger.info(f"Client {websocket.client.host} disconnected")
 
     def subscribe(self, websocket: WebSocket, stations: List[str]):
@@ -53,6 +62,11 @@ class ConnectionManager:
         else:
             self.subscribed_stations[websocket] = set()
             logger.info(f"Client {websocket.client.host} unsubscribed from all stations")
+    
+    def set_resolution(self, websocket: WebSocket, width: int):
+        """設定客戶端的顯示解析度"""
+        self.client_resolutions[websocket] = width
+        logger.info(f"Client {websocket.client.host} set resolution to {width}px")
 
     async def send_wave_packet(self, wave_packet: dict):
         """將波形資料包傳送給已訂閱的客戶端"""
@@ -84,11 +98,39 @@ class ConnectionManager:
                 }
 
             if filtered_batch:
+                # 根據客戶端解析度進行降採樣
+                resolution_width = self.client_resolutions.get(websocket, 1000)  # 預設 1000
+                
+                downsampled_batch = {}
+                for wave_id, wave_data in filtered_batch.items():
+                    waveform = wave_data.get("waveform", [])
+                    samprate = wave_data.get("samprate", 100)
+                    
+                    if waveform and len(waveform) > 0:
+                        # 計算降採樣因子
+                        downsample_factor = calculate_downsample_factor(samprate, resolution_width)
+                        
+                        # 執行降採樣
+                        downsampled_waveform = downsample_waveform(np.array(waveform), downsample_factor)
+                        
+                        # 建立降採樣後的資料
+                        downsampled_batch[wave_id] = {
+                            **wave_data,
+                            "waveform": downsampled_waveform.tolist(),
+                            "samprate": samprate,  # 保留原始採樣率
+                            "effective_samprate": samprate / downsample_factor,  # 降採樣後的有效採樣率
+                            "original_length": len(waveform),
+                            "downsampled_length": len(downsampled_waveform),
+                            "downsample_factor": downsample_factor
+                        }
+                    else:
+                        downsampled_batch[wave_id] = wave_data
+                
                 # 建立針對此客戶端的資料包
                 client_packet = {
                     "waveid": wave_packet["waveid"],
                     "timestamp": wave_packet["timestamp"],
-                    "data": filtered_batch,
+                    "data": downsampled_batch,
                 }
                 try:
                     # 發送資料
@@ -126,6 +168,11 @@ async def websocket_endpoint(websocket: WebSocket):
             if event == "subscribe_stations":
                 stations = payload.get("stations", [])
                 socket_manager.subscribe(websocket, stations)
+            
+            elif event == "set_display_resolution":
+                # 處理客戶端解析度設定
+                width = payload.get("width", 1000)  # 預設 1000 像素
+                socket_manager.set_resolution(websocket, width)
             
             elif event == "request_historical_data":
                 # Handle request for historical data (last 120 seconds)
@@ -166,13 +213,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.info(f"Querying historical data: start_time={start_time}, end_time={end_time}, stations={stations[:5]}...")
                     logger.info(f"Stream keys (first 5): {[k.decode('utf-8') for k in stream_keys[:5]]}")
                     
+                    # 獲取客戶端解析度
+                    resolution_width = socket_manager.client_resolutions.get(websocket, 1000)
+                    
                     # Fetch historical data using pipeline
                     fetch_start = time.time()
                     wave_packets = await get_historical_waves_bulk(
                         redis_client, 
                         stream_keys, 
                         start_time, 
-                        end_time
+                        end_time,
+                        resolution_width  # 傳遞解析度用於降採樣
                     )
                     fetch_time = time.time() - fetch_start
                     
@@ -223,7 +274,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # --- 從 Redis 讀取並推送資料的背景任務 ---
-async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_time):
+async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_time, resolution_width=1000):
     """
     Fetch historical waveform data for multiple streams using Redis Pipeline.
     Uses xrange to query time-based data efficiently.
@@ -233,9 +284,10 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
         stream_keys: List of stream keys (e.g., [b'wave:A001:HLZ', ...])
         start_time: Start timestamp (seconds)
         end_time: End timestamp (seconds)
+        resolution_width: Client display width in pixels (for downsampling)
     
     Returns:
-        dict: {wave_id: {waveform, pga, startt, endt, samprate}, ...}
+        list: List of wave_batch dicts (one per 5-second window)
     """
     if not stream_keys:
         return {}
@@ -357,15 +409,26 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
                     continue
                 
                 chunk = chunks_to_process[i]
-                pga = float(np.max(np.abs(waveform_processed)))
+                samprate = chunk['samprate']
+                
+                # 執行降採樣（與即時資料處理邏輯一致）
+                downsample_factor = calculate_downsample_factor(samprate, resolution_width)
+                downsampled_waveform = downsample_waveform(waveform_processed, downsample_factor)
+                
+                pga = float(np.max(np.abs(downsampled_waveform)))
                 
                 wave_batch[chunk['wave_id']] = {
-                    "waveform": waveform_processed.tolist(),
+                    "waveform": downsampled_waveform.tolist(),
                     "pga": pga,
                     "startt": chunk['startt'],
                     "endt": chunk['endt'],
-                    "samprate": chunk['samprate'],
+                    "samprate": chunk['samprate'],  # 保留原始採樣率
+                    "effective_samprate": chunk['samprate'] / downsample_factor,  # 降採樣後的有效採樣率
+                    "original_length": len(waveform_processed),
+                    "downsampled_length": len(downsampled_waveform),
+                    "downsample_factor": downsample_factor
                 }
+
             
             if wave_batch:
                 all_packets.append(wave_batch)
@@ -593,7 +656,7 @@ async def redis_wave_reader():
                 logger.info(f"Processed {processed_count} Z-channel waves in {processing_time:.3f}s, sending {len(wave_batch)} to clients")
                 
                 await socket_manager.send_wave_packet(wave_packet)
-                await asyncio.sleep(0.25)
+                await asyncio.sleep(1)
 
         except Exception as e:
             logger.error(f"Error in redis_wave_reader: {e}")
@@ -731,6 +794,40 @@ def convert_to_tsmip_legacy_naming(wave):
 
 # Cache for missing stations to avoid log flooding
 missing_stations_cache = set()
+
+def downsample_waveform(waveform, factor):
+    """
+    簡單降採樣：每 factor 個點取一個
+    
+    Args:
+        waveform: numpy array 或 list
+        factor: 降採樣因子
+    
+    Returns:
+        降採樣後的 numpy array
+    """
+    if factor <= 1:
+        return waveform
+    return waveform[::factor]
+
+def calculate_downsample_factor(samprate, resolution_width):
+    """
+    計算降採樣因子
+    
+    Args:
+        samprate: 採樣率 (Hz)
+        resolution_width: 客戶端解析度寬度 (pixels)
+    
+    Returns:
+        降採樣因子 (整數)
+    """
+    # 120 秒的總資料點數
+    total_points = FIXED_TIME_WINDOW * samprate
+    # 目標點數 = 解析度 * POINTS_PER_PIXEL
+    target_points = resolution_width * POINTS_PER_PIXEL
+    # 計算降採樣因子
+    factor = int(total_points / target_points)
+    return max(1, factor)  # 至少為 1（不降採樣）
 
 def get_wave_constant(wave):
     # count to cm/s^2

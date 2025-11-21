@@ -15,24 +15,6 @@ export function calculateStationYPosition(latitude, minLat, maxLat, availableHei
 }
 
 /**
- * 計算動態降採樣因子
- * 根據時間窗口和波形寬度自動調整，避免過度繪製
- * @param {number} timeWindow - 時間窗口（秒）
- * @param {number} effectiveSamprate - 有效採樣率
- * @param {number} waveWidth - 波形寬度（像素）
- * @returns {number} 降採樣因子
- */
-export function calculateDownsampleFactor(timeWindow, effectiveSamprate, waveWidth) {
-    // 總點數 = 時間窗口 * 採樣率
-    const totalPoints = timeWindow * effectiveSamprate;
-    // 目標點數 = 波形寬度 * 2（每像素約 2 個點）
-    const targetPoints = waveWidth * 2;
-    // 降採樣因子
-    const calculatedFactor = Math.floor(totalPoints / targetPoints);
-    return Math.max(1, calculatedFactor);
-}
-
-/**
  * 計算 Pick 標記的 X 座標
  * @param {number} pickTime - Pick 時間（毫秒）
  * @param {number} baseTime - 基準時間（毫秒）

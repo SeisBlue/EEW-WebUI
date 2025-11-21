@@ -26,7 +26,6 @@ function App() {
 
   // Map state
   const [mapBounds, setMapBounds] = useState(null);
-  const [displayTimeWindow, setDisplayTimeWindow] = useState(DEFAULT_DISPLAY_WINDOW);
 
   // ===== Custom Hooks =====
 
@@ -100,6 +99,38 @@ function App() {
     };
   }, [socket, stationsToSubscribe]);
 
+  // ===== Send Display Resolution to Backend =====
+
+  useEffect(() => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    
+    // 計算波形顯示區域的實際像素寬度
+    const calculateWaveformWidth = () => {
+      // 波形區域大約佔螢幕寬度的 60%，扣除邊距約 100px
+      return Math.floor(window.innerWidth * 0.6 - 100);
+    };
+    
+    const width = calculateWaveformWidth();
+    socket.send(JSON.stringify({
+      event: 'set_display_resolution',
+      data: { width }
+    }));
+    
+    // 監聽視窗大小變化
+    const handleResize = () => {
+      if (socket?.readyState === WebSocket.OPEN) {
+        const newWidth = calculateWaveformWidth();
+        socket.send(JSON.stringify({
+          event: 'set_display_resolution',
+          data: { width: newWidth }
+        }));
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [socket]);
+
   // ===== Event Handlers =====
 
   const handleSelectionChange = (mode, selectedStations) => {
@@ -112,10 +143,6 @@ function App() {
 
   const handleMapBoundsChange = (bounds) => {
     setMapBounds(bounds);
-  };
-
-  const handleDisplayTimeWindowChange = (newTimeWindow) => {
-    setDisplayTimeWindow(newTimeWindow);
   };
 
   // ===== Derived State =====
@@ -238,8 +265,6 @@ function App() {
                 displayStations={displayStations}
                 stationMap={stationMap}
                 title={waveformTitle}
-                timeWindow={DEFAULT_DISPLAY_WINDOW}
-                onTimeWindowChange={handleDisplayTimeWindowChange}
                 latMin={mapBounds?.minLat}
                 latMax={mapBounds?.maxLat}
               />
