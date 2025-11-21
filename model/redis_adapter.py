@@ -122,52 +122,73 @@ class RedisAdapter:
         Optimized fetch:
         1. Predicts keys (wave:{station}:{channel}) to avoid 'scan_iter'.
         2. Pipelines all requests.
-        3. Returns (headers, data_matrix) where data_matrix is a 2D numpy array padded to max length.
+        3. Returns (station_headers, data_matrix) 
+           - station_headers: list of dicts [{'station': 'A001'}, ...]
+           - data_matrix: 3D numpy array of shape (N_stations, max_len, N_channels)
         """
         if not self.redis_client or not stations:
             return [], np.array([])
 
         # 1. Generate all potential keys
         stream_keys = []
-        key_map = [] # (station, channel, key)
+        # Map to retrieve data later: station_idx -> channel_idx -> key
+        # But simpler: just rebuild keys during processing
         for station in stations:
             for channel in channels:
                 key = f"wave:{station}:{channel}"
                 stream_keys.append(key)
-                key_map.append({'station': station, 'channel': channel, 'key': key})
 
         # 2. Bulk fetch
         raw_data = self.get_waveforms_bulk(stream_keys, start_time, end_time)
         
-        # 3. Process and Pad
-        valid_headers = []
-        valid_waveforms = []
+        # 3. Determine max length for padding
+        max_len = 0
+        has_data = False
+        for w in raw_data.values():
+            if w is not None and len(w) > 0:
+                max_len = max(max_len, len(w))
+                has_data = True
         
-        for item in key_map:
-            key = item['key']
-            waveform = raw_data.get(key)
-            if waveform is not None and len(waveform) > 0:
-                valid_headers.append(item)
-                valid_waveforms.append(waveform)
-        
-        if not valid_waveforms:
+        if not has_data:
             return [], np.array([])
             
-        # Pad to max length
-        max_len = max(len(w) for w in valid_waveforms)
-        # Ensure at least some length if all are empty (though check above handles it)
+        # 4. Build 3D array (Stations, Time, Channels)
+        n_stations = len(stations)
+        n_channels = len(channels)
         
-        padded_waveforms = []
-        for w in valid_waveforms:
-            if len(w) < max_len:
-                padded = np.pad(w, (0, max_len - len(w)), mode='constant', constant_values=0)
-                padded_waveforms.append(padded)
-            else:
-                padded_waveforms.append(w)
-                
-        data_matrix = np.array(padded_waveforms)
+        # Initialize with zeros (padding)
+        data_matrix = np.zeros((n_stations, max_len, n_channels), dtype=np.int32)
+        station_headers = []
         
-        return valid_headers, data_matrix
+        valid_station_indices = []
+        
+        for i, station in enumerate(stations):
+            station_has_data = False
+            for j, channel in enumerate(channels):
+                key = f"wave:{station}:{channel}"
+                w = raw_data.get(key)
+                if w is not None and len(w) > 0:
+                    length = len(w)
+                    # Fill data into the matrix
+                    # Truncate if for some reason it exceeds max_len (shouldn't happen based on logic above)
+                    data_matrix[i, :length, j] = w[:max_len]
+                    station_has_data = True
+            
+            if station_has_data:
+                station_headers.append({'station': station})
+                valid_station_indices.append(i)
+        
+        # Filter out stations that had absolutely no data?
+        # User asked for "header 合併", usually implies 1-to-1 with the array rows.
+        # If we keep the array shape as (len(stations), ...), we might have empty rows.
+        # Let's filter to only valid stations to be clean.
+        
+        if not valid_station_indices:
+            return [], np.array([])
+            
+        final_data = data_matrix[valid_station_indices]
+        
+        return station_headers, final_data
 
 if __name__ == '__main__':
     # Example usage:
@@ -216,24 +237,24 @@ if __name__ == '__main__':
                         fetch_time = time.time() - fetch_start
                         
                         if len(headers) > 0:
-                            logger.info(f"Fetched {len(headers)} streams in {fetch_time:.4f}s. Data shape: {data_matrix.shape}")
+                            logger.info(f"Fetched {len(headers)} stations in {fetch_time:.4f}s. Data shape: {data_matrix.shape}")
                             
                             # Optional: Log summary per station to verify
-                            # Group by station for logging
-                            station_stats = {}
                             for i, header in enumerate(headers):
                                 sta = header['station']
-                                ch = header['channel']
-                                count = len(data_matrix[i])
-                                # Note: data_matrix is padded, so count is max_len. 
-                                # If we want actual length, we'd need to return it or trim zeros (if zeros are padding)
-                                # But user asked for "padded to 30s", so showing shape is good.
-                                if sta not in station_stats:
-                                    station_stats[sta] = []
-                                station_stats[sta].append(f"{ch}={count}")
-                            
-                            for sta, stats in station_stats.items():
-                                logger.info(f"Station {sta}: {', '.join(stats)}")
+                                # Data is (Time, Channels) for this station
+                                station_data = data_matrix[i]
+                                
+                                # Count non-zeros per channel to verify data presence
+                                channel_counts = []
+                                channels = ['HLZ', 'HLN', 'HLE']
+                                for j, ch in enumerate(channels):
+                                    # Count non-zero elements as a proxy for "valid samples" 
+                                    # (since we padded with zeros, this is a rough check)
+                                    count = np.count_nonzero(station_data[:, j])
+                                    channel_counts.append(f"{ch}={count}")
+                                
+                                logger.info(f"Station {sta}: {', '.join(channel_counts)}")
                         else:
                             logger.warning("No wave data found for target stations.")
                     else:
