@@ -102,7 +102,7 @@
   gap: var(--spacing-sm);
   background: var(--color-bg-dark);
   border-right: 1px solid var(--color-border-base);
-  overflow-y: auto;
+  overflow: hidden; /* Changed from overflow-y: auto */
 }
 
 .main-content {
@@ -130,15 +130,6 @@
   background: var(--color-bg-base);
   display: flex;
   flex-direction: column;
-}
-
-.report-detail-panel {
-  flex: 0 0 350px; /* 預測資料面板寬度 */
-  padding: var(--spacing-sm);
-  display: flex;
-  flex-direction: column;
-  background: var(--color-bg-dark);
-  border-left: 1px solid var(--color-border-base);
 }
 
 .section {
@@ -219,8 +210,9 @@
    ============================================ */
 .report-list-section,
 .event-list-section {
-  flex: 1; /* 平均分配空間 */
-  min-height: 0; /* 允許 flex item 縮小 */
+  flex: 0 0 auto; /* Fixed height based on content */
+  max-height: 25vh; /* Limit height to 25% of viewport */
+  min-height: 150px; /* Minimum readable height */
   overflow: hidden;
 }
 
@@ -257,7 +249,8 @@
    詳細資料面板
    ============================================ */
 .report-detail-section {
-  flex: 1;
+  flex: 1; /* Grow to fill remaining space */
+  min-height: 200px; /* Minimum height for detail view */
   overflow: hidden;
 }
 

@@ -237,6 +237,25 @@ function App() {
               ))}
             </ul>
           </section>
+          
+          {/* Detail View moved here */}
+          <section className="section report-detail-section">
+            <div className="section-header">
+              <h2>詳細資料</h2>
+            </div>
+            <div className="report-detail-content">
+              {selectedItem ? (
+                <div>
+                  <h3>{selectedItem.title}</h3>
+                  <p>{selectedItem.content}</p>
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <p>請從上方列表選擇一個項目以查看詳細資料。</p>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
 
         {/* Middle Panel: Map and Waveforms */}
@@ -281,27 +300,6 @@ function App() {
               />
             )}
           </div>
-        </div>
-
-        {/* Right Panel: Shared Detail View */}
-        <div className="report-detail-panel">
-          <section className="section report-detail-section">
-            <div className="section-header">
-              <h2>詳細資料</h2>
-            </div>
-            <div className="report-detail-content">
-              {selectedItem ? (
-                <div>
-                  <h3>{selectedItem.title}</h3>
-                  <p>{selectedItem.content}</p>
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <p>請從左側列表選擇一個項目以查看詳細資料。</p>
-                </div>
-              )}
-            </div>
-          </section>
         </div>
       </div>
     </div>
