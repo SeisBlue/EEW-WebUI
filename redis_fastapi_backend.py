@@ -22,7 +22,7 @@ REDIS_CONFIG = {
 # --- 波形降採樣配置 ---
 # 控制傳送資料點數的倍數：資料點數 = resolution_width * POINTS_PER_PIXEL
 # 預設 2.0 表示傳送解析度兩倍的資料點，可調整以平衡畫質與傳輸量
-POINTS_PER_PIXEL = 2.0
+POINTS_PER_PIXEL = 1.0
 FIXED_TIME_WINDOW = 120  # 固定時間窗口（秒）
 
 app = FastAPI()

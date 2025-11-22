@@ -1,12 +1,15 @@
 import { useMemo, memo } from 'react';
 import PropTypes from 'prop-types';
 import DeckGL from '@deck.gl/react';
-import { OrthographicView } from '@deck.gl/core';
+import { MapView } from '@deck.gl/core';
 import { useGridLayers } from './hooks/useGridLayers';
 import { useTimeAxisLayer } from './hooks/useTimeAxisLayer';
 import { useLabelLayers } from './hooks/useLabelLayers';
 import { useWaveformLayers } from './hooks/useWaveformLayers';
+import { calculateLongitude } from './utils';
 import { LAT_MAX, LAT_MIN, LEFT_MARGIN, RIGHT_MARGIN, BOTTOM_MARGIN } from './constants';
+
+
 
 const WaveformPanel = memo(function WaveformPanel({
   title,
@@ -25,49 +28,95 @@ const WaveformPanel = memo(function WaveformPanel({
   const maxLat = latMax ?? LAT_MAX;
 
   // 計算佈局尺寸
-  const xOffset = LEFT_MARGIN;
   const waveWidth = Math.max(100, panelWidth - LEFT_MARGIN - RIGHT_MARGIN);
+  // 有效高度：扣除底部邊距，這是波形實際佔用的高度
+  const effectiveHeight = Math.max(100, panelHeight - BOTTOM_MARGIN);
+
+  // 1. 計算緯度範圍
+  const latRange = maxLat - minLat;
+
+  // 2. 計算經度範圍 (基於螢幕寬高比)
+  // 我們希望 latRange 對應 effectiveHeight
+  // lonRange 對應 waveWidth
+  // 保持 1:1 比例
+  const lonRange = latRange * (waveWidth / effectiveHeight);
+
+  // 3. 計算每秒對應的經度
+  const degreesPerSecond = lonRange / timeWindow;
+
+  // 4. 計算 Zoom Level
+  // Deck.gl Zoom 0: 360度 = 512px
+  const zoom = Math.log2(waveWidth / (lonRange * (512 / 360)));
+
+
+  // 5. 計算中心緯度 (用於 ViewState)
+  // 我們希望 minLat 顯示在 effectiveHeight 的底部 (即 panelHeight - BOTTOM_MARGIN 的位置)
+  // 也就是說，視圖的底部邊緣 (panelHeight) 對應的緯度應該比 minLat 更低
+  // 計算每像素的緯度數
+  const degreesPerPixelLat = latRange / effectiveHeight;
+  // 底部邊距對應的緯度差
+  const bottomMarginDegrees = BOTTOM_MARGIN * degreesPerPixelLat;
+  
+  // 視圖的總緯度範圍 (包含底部邊距)
+  const totalLatRange = latRange + bottomMarginDegrees;
+  
+  // 視圖的中心緯度
+  // 視圖底部緯度 = minLat - bottomMarginDegrees
+  // 視圖頂部緯度 = maxLat
+  // 中心 = (視圖底部 + 視圖頂部) / 2
+  const centerLat = ((minLat - bottomMarginDegrees) + maxLat) / 2;
+
+  // 計算當前時間對應的經度
+  const currentLon = calculateLongitude(renderTrigger, baseTime, degreesPerSecond);
+
+  // 緯度映射函數：直接返回真實緯度
+  const mapLat = (lat) => lat;
 
   // 使用各個 Hook 獲取圖層
   const gridLayers = useGridLayers({
+    mapLat,
+    currentLon,
+    waveWidth,
+    panelWidth,
+    panelHeight,
     minLat,
     maxLat,
-    panelWidth,
-    panelHeight
+    lonRange
   });
 
   const timeAxisLayer = useTimeAxisLayer({
-    xOffset,
-    waveWidth,
-    panelHeight
+    timeWindow,
+    panelHeight,
+    minLat,
+    maxLat,
+    lonRange
   });
 
   const labelLayers = useLabelLayers({
     stations,
     stationMap,
     waveDataMap,
-    xOffset,
-    waveWidth,
+    mapLat,
     panelHeight,
-    minLat,
-    maxLat,
     renderTrigger,
     timeWindow,
-    bottomMargin: BOTTOM_MARGIN
+    bottomMargin: BOTTOM_MARGIN,
+    minLat,
+    maxLat,
+    lonRange
   });
 
   const waveformLayers = useWaveformLayers({
     stations,
     stationMap,
     waveDataMap,
-    waveWidth,
-    xOffset,
-    panelHeight,
-    minLat,
-    maxLat,
+    mapLat,
     baseTime,
     timeWindow,
-    bottomMargin: BOTTOM_MARGIN
+    bottomMargin: BOTTOM_MARGIN,
+    degreesPerSecond,
+    minLat,
+    maxLat
   });
 
   // 整合所有圖層
@@ -78,57 +127,63 @@ const WaveformPanel = memo(function WaveformPanel({
     ...labelLayers
   ];
 
-  // 定義兩個 View
-  const views = [
-    new OrthographicView({
-      id: 'static-view',
-      controller: false,
-      x: 0,
-      y: 0,
-      width: '100%',
-      height: '100%'
-    }),
-    new OrthographicView({
-      id: 'wave-view',
-      controller: false,
-      x: xOffset,
-      y: 0,
-      width: waveWidth,
-      height: '100%'
-    })
-  ];
-
   // 確保尺寸有效
   const validWidth = Math.max(panelWidth, 1);
   const validHeight = Math.max(panelHeight, 1);
 
-  // 計算 wave-view 的相機位置
-  const waveSpeed = waveWidth / (timeWindow * 1000);
-  const cameraXOffset = (renderTrigger - baseTime) * waveSpeed;
+  // 定義兩個 View
+  const views = [
+    new MapView({
+      id: 'wave-view',
+      controller: false,
+      x: LEFT_MARGIN, // 波形視圖從左邊距開始
+      y: 0,
+      width: waveWidth,
+      height: '100%',
+      repeat: true
+    }),
+    new MapView({
+      id: 'label-view',
+      controller: false,
+      x: 0, // 標籤視圖覆蓋整個寬度 (或僅左側)
+      y: 0,
+      width: '100%', // 為了方便，讓它覆蓋整個寬度，但我們只在左側繪製標籤
+      height: '100%',
+      repeat: false // 標籤不需要重複
+    })
+  ];
 
-  // static-view 保持固定
-  const staticViewState = {
-    target: [validWidth / 2, validHeight / 2, 0],
-    zoom: 0
-  };
-
-  // wave-view 隨時間移動
-  const waveViewState = {
-    target: [xOffset + waveWidth / 2 + cameraXOffset, validHeight / 2, 0],
-    zoom: 0
-  };
-
+  // ViewState
   const viewState = {
-    'static-view': staticViewState,
-    'wave-view': waveViewState
+    'wave-view': {
+      longitude: currentLon - (lonRange / 2), // 將當前時間置於視圖右側? 不，currentLon 是 "現在"。
+      // 我們希望現在在最右邊。
+      // 如果視圖寬度是 lonRange。
+      // 中心點應該是 currentLon - (lonRange / 2)
+      latitude: centerLat,
+      zoom: zoom,
+      pitch: 0,
+      bearing: 0,
+      transitionDuration: 0
+    },
+    'label-view': {
+      longitude: 0, // 固定
+      latitude: centerLat,
+      zoom: zoom, // 保持縮放一致，確保垂直對齊
+      pitch: 0,
+      bearing: 0,
+      transitionDuration: 0
+    }
   };
 
-  // Layer Filter: 分配圖層到對應的 View
+  // Layer Filter
   const layerFilter = ({ layer, viewport }) => {
-    if (viewport.id === 'static-view') {
-      return ['grid-lines', 'grid-labels', 'time-axis', 'labels', 'baselines'].includes(layer.id);
-    } else if (viewport.id === 'wave-view') {
-      return ['waveforms', 'pick-lines', 'pick-labels'].includes(layer.id);
+    if (viewport.id === 'wave-view') {
+      // 波形視圖顯示：波形、Pick線/標籤、網格線、基線
+      return ['waveforms', 'pick-lines', 'pick-labels', 'grid-lines', 'baselines'].includes(layer.id);
+    } else if (viewport.id === 'label-view') {
+      // 標籤視圖顯示：測站標籤、網格標籤、時間軸(靜態)
+      return ['labels', 'grid-labels', 'time-axis'].includes(layer.id);
     }
     return false;
   };
@@ -164,7 +219,6 @@ const WaveformPanel = memo(function WaveformPanel({
     </div>
   );
 }, (prevProps, nextProps) => {
-  // 自定義比較函數：只在關鍵屬性變化時重新渲染
   return (
     prevProps.title === nextProps.title &&
     prevProps.stations === nextProps.stations &&

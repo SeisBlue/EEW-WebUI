@@ -80,7 +80,7 @@ function App() {
       }));
 
       // Request historical data for these stations (120 seconds window)
-      console.log(`[App] Requesting historical data for ${stationsToSubscribe.length} stations:`, stationsToSubscribe.slice(0, 10));
+      console.log(`[App] Requesting historical data for ${stationsToSubscribe.length} stations. Reason: stationsToSubscribe changed?`, stationsToSubscribe);
       socket.send(JSON.stringify({
         event: 'request_historical_data',
         data: {
@@ -103,19 +103,19 @@ function App() {
 
   useEffect(() => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    
+
     // 計算波形顯示區域的實際像素寬度
     const calculateWaveformWidth = () => {
       // 波形區域大約佔螢幕寬度的 60%，扣除邊距約 100px
       return Math.floor(window.innerWidth * 0.6 - 100);
     };
-    
+
     const width = calculateWaveformWidth();
     socket.send(JSON.stringify({
       event: 'set_display_resolution',
       data: { width }
     }));
-    
+
     // 監聽視窗大小變化
     const handleResize = () => {
       if (socket?.readyState === WebSocket.OPEN) {
@@ -126,7 +126,7 @@ function App() {
         }));
       }
     };
-    
+
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [socket]);

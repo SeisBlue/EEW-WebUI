@@ -13,10 +13,9 @@ export const SAMPLE_RATE = 100; // 100 Hz
 export const LEFT_MARGIN = 120;   // 左側留白（測站代碼的顯示空間）
 export const RIGHT_MARGIN = 120;  // 右側留白（測站名稱和 PGA 的顯示空間）
 export const BOTTOM_MARGIN = 60;  // 底部留白（為時間軸預留空間）
-export const TIME_AXIS_Y_OFFSET = 60; // 時間軸距離底部的距離
 
 // 波形高度
-export const WAVE_HEIGHT = 45;
+export const WAVE_AMPLITUDE_SCALE = 8.0; // 波形振幅放大倍率
 
 // 顏色定義
 export const COLORS = {
@@ -32,7 +31,7 @@ export const COLORS = {
     TIME_AXIS: [255, 255, 255, 128],      // 白色，中等透明度
     LABEL_DEFAULT: [224, 224, 224, 255],  // 淺灰色，不透明
     LABEL_INACTIVE: [102, 102, 102, 255], // 深灰色，不透明
-    LABEL_PGA: [255,255,255],             // 白色
+    LABEL_PGA: [255, 255, 255],             // 白色
     TIME_CURRENT: [76, 175, 80, 255],     // 綠色，不透明
     TIME_RELATIVE: [144, 202, 249, 255],  // 藍色，不透明
 };
