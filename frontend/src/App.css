@@ -211,8 +211,8 @@
 .report-list-section,
 .event-list-section {
   flex: 0 0 auto; /* Fixed height based on content */
-  max-height: 25vh; /* Limit height to 25% of viewport */
-  min-height: 150px; /* Minimum readable height */
+  max-height: 30vh; /* Limit height to 25% of viewport */
+  min-height: 250px; /* Minimum readable height */
   overflow: hidden;
 }
 
@@ -250,7 +250,7 @@
    ============================================ */
 .report-detail-section {
   flex: 1; /* Grow to fill remaining space */
-  min-height: 200px; /* Minimum height for detail view */
+  min-height: 250px; /* Minimum height for detail view */
   overflow: hidden;
 }
 
