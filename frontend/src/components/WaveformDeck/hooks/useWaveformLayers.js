@@ -9,13 +9,8 @@ import {
 
 /**
  * 波形圖層 Hook
- * 繪製基線、波形路徑和 Pick 標記
- */
-
-
-/**
- * 波形圖層 Hook
- * 繪製基線、波形路徑和 Pick 標記
+ * 繪製基線、波形路徑
+ * @param {Set<string>} highlightedStations - 需要高亮顯示的測站集合（例如有 pick 的測站、hover 的測站等）
  */
 export function useWaveformLayers({
   stations,
@@ -27,7 +22,8 @@ export function useWaveformLayers({
   bottomMargin,
   degreesPerSecond,
   minLat,
-  maxLat
+  maxLat,
+  highlightedStations = new Set()  // 默認為空集合
 }) {
   return useMemo(() => {
     // 預計算所有測站的 Y 位置 (緯度)
@@ -46,11 +42,8 @@ export function useWaveformLayers({
     const latRange = maxLat - minLat;
     const waveHeightLat = (latRange / (stations.length || 1)) * WAVE_AMPLITUDE_SCALE;
 
-    // 合併所有基線到單個數據集
     const baselineData = [];
     const waveformData = [];
-    const pickLines = [];
-    const pickLabels = [];
 
     stations.forEach((stationCode) => {
       const centerLat = stationPositions.get(stationCode);
@@ -68,19 +61,10 @@ export function useWaveformLayers({
       // 處理波形數據
       if (waveData?.dataPoints?.length > 0) {
         const displayScale = waveData.displayScale || 1.0;
-        const hasPicks = waveData.picks && waveData.picks.length > 0;
-
-        // 確定波形樣式
-        let waveColor;
-        let lineWidth;
-
-        if (hasPicks) {
-          waveColor = COLORS.WAVEFORM_ACTIVE;
-          lineWidth = 0.5;
-        } else {
-          waveColor = COLORS.WAVEFORM_DIM;
-          lineWidth = 0.5;
-        }
+        
+        // 根據是否高亮選擇顏色
+        const isHighlighted = highlightedStations.has(stationCode);
+        const waveColor = isHighlighted ? COLORS.WAVEFORM_ACTIVE : COLORS.WAVEFORM_DIM;
 
         waveData.dataPoints.forEach(point => {
           const { timestamp, values, samprate, isGap } = point;
@@ -112,35 +96,9 @@ export function useWaveformLayers({
             waveformData.push({
               path: pathPoints,
               color: waveColor,
-              width: lineWidth
+              width: 0.5
             });
           }
-        });
-      }
-
-      // 處理 Pick 標記
-      if (waveData?.picks?.length > 0) {
-        waveData.picks.forEach(pick => {
-          const pickTime = pick.time;
-
-          // 計算經度
-          const lon = calculateLongitude(pickTime, baseTime, degreesPerSecond);
-
-          // Pick 線
-          pickLines.push({
-            path: [[lon, centerLat - waveHeightLat / 2], [lon, centerLat + waveHeightLat / 2]],
-            color: COLORS.PICK_MARKER,
-            width: 2
-          });
-
-          // Pick 文字
-          pickLabels.push({
-            position: [lon, centerLat - waveHeightLat / 2 - (waveHeightLat * 0.1)], // 稍微往下偏移
-            text: pick.type || 'P',
-            color: COLORS.PICK_LABEL,
-            size: 12,
-            anchor: 'middle'
-          });
         });
       }
     });
@@ -170,45 +128,13 @@ export function useWaveformLayers({
         widthMinPixels: 1.2,
         jointRounded: false,
         capRounded: false,
-        wrapLongitude: true, // 啟用經度環繞
+        wrapLongitude: true,
         updateTriggers: {
           getPath: [waveDataMap, baseTime]
-        }
-      }));
-    }
-
-    if (pickLines.length > 0) {
-      layers.push(new PathLayer({
-        id: 'pick-lines',
-        data: pickLines,
-        getPath: d => d.path,
-        getColor: d => d.color,
-        getWidth: d => d.width,
-        widthMinPixels: 1,
-        wrapLongitude: true, // 啟用經度環繞
-        updateTriggers: {
-          getPath: [waveDataMap, baseTime]
-        }
-      }));
-    }
-
-    if (pickLabels.length > 0) {
-      layers.push(new TextLayer({
-        id: 'pick-labels',
-        data: pickLabels,
-        getPosition: d => d.position,
-        getText: d => d.text,
-        getColor: d => d.color,
-        getSize: d => d.size,
-        getTextAnchor: d => d.anchor,
-        fontFamily: 'monospace',
-        fontWeight: 'bold',
-        updateTriggers: {
-          getPosition: [waveDataMap, baseTime]
         }
       }));
     }
 
     return layers;
-  }, [stations, stationMap, waveDataMap, mapLat, baseTime, timeWindow, bottomMargin, degreesPerSecond, minLat, maxLat]);
+  }, [stations, stationMap, waveDataMap, mapLat, baseTime, timeWindow, bottomMargin, degreesPerSecond, minLat, maxLat, highlightedStations]);
 }

@@ -6,8 +6,9 @@ import { useGridLayers } from './hooks/useGridLayers';
 import { useTimeAxisLayer } from './hooks/useTimeAxisLayer';
 import { useLabelLayers } from './hooks/useLabelLayers';
 import { useWaveformLayers } from './hooks/useWaveformLayers';
+import { useWaveformPickLayers } from './hooks/useWaveformPickLayers';
 import { calculateLongitude } from './utils';
-import { LAT_MAX, LAT_MIN, LEFT_MARGIN, RIGHT_MARGIN, BOTTOM_MARGIN } from './constants';
+import { LAT_MAX, LAT_MIN, LEFT_MARGIN, RIGHT_MARGIN, BOTTOM_MARGIN, WAVE_AMPLITUDE_SCALE } from './constants';
 
 
 
@@ -63,6 +64,11 @@ const WaveformPanel = memo(function WaveformPanel({
   // 緯度映射函數：直接返回真實緯度
   const mapLat = (lat) => lat;
 
+  // 計算波形高度 (緯度度數) - 與 useWaveformLayers 保持一致
+  const waveHeightLat = useMemo(() => {
+    return (latRange / (stations.length || 1)) * WAVE_AMPLITUDE_SCALE;
+  }, [latRange, stations.length]);
+
   // 使用各個 Hook 獲取圖層
   const gridLayers = useGridLayers({
     mapLat,
@@ -97,6 +103,21 @@ const WaveformPanel = memo(function WaveformPanel({
     lonRange
   });
 
+  // 計算需要高亮的測站集合（目前是有 pick 的測站，未來可擴展為 hover 等）
+  const highlightedStations = useMemo(() => {
+    const highlighted = new Set();
+    stations.forEach(stationCode => {
+      const waveData = waveDataMap[stationCode];
+      // 有 pick 的測站應該被高亮
+      if (waveData?.picks && waveData.picks.length > 0) {
+        highlighted.add(stationCode);
+      }
+      // 未來可以在這裡添加其他高亮條件，例如：
+      // if (hoveredStation === stationCode) highlighted.add(stationCode);
+    });
+    return highlighted;
+  }, [stations, waveDataMap]);
+
   const waveformLayers = useWaveformLayers({
     stations,
     stationMap,
@@ -107,7 +128,18 @@ const WaveformPanel = memo(function WaveformPanel({
     bottomMargin: BOTTOM_MARGIN,
     degreesPerSecond,
     minLat,
-    maxLat
+    maxLat,
+    highlightedStations  // 傳遞高亮測站集合
+  });
+
+  const pickLayers = useWaveformPickLayers({
+    stations,
+    stationMap,
+    waveDataMap,
+    mapLat,
+    baseTime,
+    degreesPerSecond,
+    waveHeightLat
   });
 
   // 整合所有圖層
@@ -115,6 +147,7 @@ const WaveformPanel = memo(function WaveformPanel({
     ...gridLayers,
     timeAxisLayer,
     ...waveformLayers,
+    ...pickLayers,  // Pick 圖層：獨立於波形圖層
     ...labelLayers
   ];
 
