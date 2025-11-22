@@ -25,9 +25,11 @@ Debug         1                # for verbosity
 # List of files to play (up to 1000 allowed):
 
 
-WaveFile	/opt/earthworm/wavefile/r20240403.tank
+# WaveFile	/opt/earthworm/wavefile/r20240403.tank
+WaveFile	/opt/earthworm/wavefile/r20250120_1h.tank
 WaveFile	/opt/earthworm/wavefile/r20240403_30m.tank
 # WaveFile	/opt/earthworm/wavefile/r20240128.tank
+
 
 
 
