@@ -17,7 +17,7 @@ export function usePickPackets({ pickPackets, setWaveDataMap }) {
 
         setWaveDataMap(prev => {
             const updated = { ...prev };
-            
+
             pickPackets.forEach(latestPacket => {
                 const pickData = latestPacket.content;
 
@@ -55,7 +55,7 @@ export function usePickPackets({ pickPackets, setWaveDataMap }) {
                 if (!stationData.picks) {
                     stationData.picks = [];
                 } else if (stationData.picks === prevStationData.picks) {
-                     // If picks array is same as prev, clone it
+                    // If picks array is same as prev, clone it
                     stationData.picks = [...stationData.picks];
                 }
 
@@ -73,6 +73,9 @@ export function usePickPackets({ pickPackets, setWaveDataMap }) {
                             type: 'P',
                             id: pickData.pickid
                         });
+
+                        // Sort picks by time to ensure cleanup logic works correctly
+                        stationData.picks.sort((a, b) => a.time - b.time);
                     }
                 }
             });

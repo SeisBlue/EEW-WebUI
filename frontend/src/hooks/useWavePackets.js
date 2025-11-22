@@ -107,6 +107,10 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
             isGap: false
           });
 
+          // Sort dataPoints by timestamp to ensure cleanup logic works correctly
+          // (Oldest data must be at the beginning of the array)
+          stationData.dataPoints.sort((a, b) => a.timestamp - b.timestamp);
+
           // Update last end time
           if (endt) {
             stationData.lastEndTime = endt;
@@ -130,6 +134,10 @@ export function useWavePackets({ wavePackets, setWaveDataMap }) {
               maxAbs,
               count: waveform.length
             });
+
+            // Sort recentStats points by timestamp
+            stationData.recentStats.points.sort((a, b) => a.timestamp - b.timestamp);
+
             stationData.recentStats.totalSumSquares += sumSquares;
             stationData.recentStats.totalCount += waveform.length;
 
