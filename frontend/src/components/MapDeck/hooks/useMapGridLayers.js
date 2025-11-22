@@ -27,7 +27,7 @@ export function useMapGridLayers() {
             // 在主要線上添加標籤
             if (isMajor) {
                 latGridLabels.push({
-                    position: [lonMin + 0.1, lat],
+                    position: [119.8, lat],
                     text: `${lat}°N`,
                     color: COLORS.GRID_LABEL,
                     size: 12

@@ -11,9 +11,13 @@
  */
 export function calculateLatitudeRange(latitude, zoom, windowHeight) {
     // 根據 zoom 計算大約的緯度範圍
-    // zoom 每增加1，範圍縮小約一半
-    // 調整係數以更好地匹配地圖實際可視範圍
-    const latRange = (180 * windowHeight * 1.66) / (512 * Math.pow(2, zoom));
+    // 使用 Mercator 投影的比例尺：scale ~ 1 / cos(latitude)
+    // 經度每像素度數 = 360 / (512 * 2^zoom)
+    // 緯度每像素度數 ~= 經度每像素度數 * cos(latitude)
+    const degreesPerPixelLon = 360 / (512 * Math.pow(2, zoom));
+    const degreesPerPixelLat = degreesPerPixelLon * Math.cos(latitude * Math.PI / 180);
+
+    const latRange = windowHeight * degreesPerPixelLat;
     const minLat = Math.max(-90, latitude - latRange / 2);
     const maxLat = Math.min(90, latitude + latRange / 2);
 

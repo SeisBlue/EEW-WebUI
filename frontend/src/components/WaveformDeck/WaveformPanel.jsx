@@ -18,6 +18,7 @@ const WaveformPanel = memo(function WaveformPanel({
   waveDataMap,
   latMin,
   latMax,
+  mapZoom,
   panelWidth,
   panelHeight,
   renderTrigger,
@@ -35,36 +36,26 @@ const WaveformPanel = memo(function WaveformPanel({
   // 1. 計算緯度範圍
   const latRange = maxLat - minLat;
 
-  // 2. 計算經度範圍 (基於螢幕寬高比)
-  // 我們希望 latRange 對應 effectiveHeight
-  // lonRange 對應 waveWidth
-  // 保持 1:1 比例
-  const lonRange = latRange * (waveWidth / effectiveHeight);
+  // 2. 使用 Map 的 Zoom Level 計算經度範圍
+  // Deck.gl Zoom 0: 360度 = 512px
+  // 360 / lonRange * (512 / 360) * 2^zoom = waveWidth
+  // lonRange = (waveWidth * 360) / (512 * 2^zoom)
+  const zoom = mapZoom ?? 7; // Default zoom if not provided
+  const lonRange = (waveWidth * 360) / (512 * Math.pow(2, zoom));
 
   // 3. 計算每秒對應的經度
   const degreesPerSecond = lonRange / timeWindow;
 
-  // 4. 計算 Zoom Level
-  // Deck.gl Zoom 0: 360度 = 512px
-  const zoom = Math.log2(waveWidth / (lonRange * (512 / 360)));
-
 
   // 5. 計算中心緯度 (用於 ViewState)
-  // 我們希望 minLat 顯示在 effectiveHeight 的底部 (即 panelHeight - BOTTOM_MARGIN 的位置)
-  // 也就是說，視圖的底部邊緣 (panelHeight) 對應的緯度應該比 minLat 更低
-  // 計算每像素的緯度數
-  const degreesPerPixelLat = latRange / effectiveHeight;
-  // 底部邊距對應的緯度差
-  const bottomMarginDegrees = BOTTOM_MARGIN * degreesPerPixelLat;
-  
-  // 視圖的總緯度範圍 (包含底部邊距)
-  const totalLatRange = latRange + bottomMarginDegrees;
-  
-  // 視圖的中心緯度
-  // 視圖底部緯度 = minLat - bottomMarginDegrees
-  // 視圖頂部緯度 = maxLat
-  // 中心 = (視圖底部 + 視圖頂部) / 2
-  const centerLat = ((minLat - bottomMarginDegrees) + maxLat) / 2;
+  // 我們希望 minLat 顯示在 panelHeight 的底部
+  // 也就是說，視圖的底部邊緣 (panelHeight) 對應 minLat
+  // 視圖頂部邊緣 (0) 對應 maxLat
+  // 中心 = (minLat + maxLat) / 2
+  const centerLat = (minLat + maxLat) / 2;
+
+  // 計算每像素的緯度數 (用於其他計算)
+  const degreesPerPixelLat = latRange / panelHeight;
 
   // 計算當前時間對應的經度
   const currentLon = calculateLongitude(renderTrigger, baseTime, degreesPerSecond);
@@ -245,7 +236,8 @@ WaveformPanel.propTypes = {
   panelHeight: PropTypes.number.isRequired,
   renderTrigger: PropTypes.number.isRequired,
   timeWindow: PropTypes.number.isRequired,
-  baseTime: PropTypes.number.isRequired
+  baseTime: PropTypes.number.isRequired,
+  mapZoom: PropTypes.number
 };
 
 export default WaveformPanel;

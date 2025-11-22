@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import './App.css';
 import { TaiwanMapDeck } from './components/MapDeck';
 import { RealtimeWaveformDeck } from './components/WaveformDeck';
@@ -26,6 +26,7 @@ function App() {
 
   // Map state
   const [mapBounds, setMapBounds] = useState(null);
+  const [mapZoom, setMapZoom] = useState(null);
 
   // ===== Custom Hooks =====
 
@@ -141,9 +142,10 @@ function App() {
     setWavePackets([]);
   };
 
-  const handleMapBoundsChange = (bounds) => {
-    setMapBounds(bounds);
-  };
+  const handleMapBoundsChange = useCallback(({ minLat, maxLat, zoom }) => {
+    setMapBounds({ minLat, maxLat });
+    setMapZoom(zoom);
+  }, []);
 
   // ===== Derived State =====
 
@@ -267,6 +269,7 @@ function App() {
                 title={waveformTitle}
                 latMin={mapBounds?.minLat}
                 latMax={mapBounds?.maxLat}
+                mapZoom={mapZoom}
               />
             ) : (
               <StationSelection

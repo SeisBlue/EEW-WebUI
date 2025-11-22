@@ -12,7 +12,8 @@ function RealtimeWaveformDeck({
   stationMap,
   title,
   latMin,
-  latMax
+  latMax,
+  mapZoom
 }) {
   const [renderTrigger, setRenderTrigger] = useState(Date.now());
   const panelRef = useRef(null);
@@ -86,6 +87,7 @@ function RealtimeWaveformDeck({
             waveDataMap={waveDataMap}
             latMin={latMin ?? LAT_MIN}
             latMax={latMax ?? LAT_MAX}
+            mapZoom={mapZoom}
             panelWidth={dimensions.width}
             panelHeight={dimensions.height}
             renderTrigger={renderTrigger}
@@ -104,7 +106,8 @@ RealtimeWaveformDeck.propTypes = {
   stationMap: PropTypes.object.isRequired,
   title: PropTypes.string.isRequired,
   latMin: PropTypes.number,
-  latMax: PropTypes.number
+  latMax: PropTypes.number,
+  mapZoom: PropTypes.number
 };
 
 export default RealtimeWaveformDeck;
