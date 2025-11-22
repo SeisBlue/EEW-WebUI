@@ -57,7 +57,7 @@ function TaiwanMapDeck({
 
   // 使用 Hooks 獲取各個圖層
   const gridLayers = useMapGridLayers();
-  const stationLayer = useStationLayers({
+  const stationLayers = useStationLayers({
     stations,
     stationIntensities,
     waveDataMap
@@ -67,7 +67,7 @@ function TaiwanMapDeck({
   // 整合所有圖層
   const allLayers = [
     ...gridLayers,
-    stationLayer,
+    ...stationLayers,  // stationLayers 現在是陣列，包含正方形邊框層和測站點層
     hoverLabel
   ].filter(Boolean);
 

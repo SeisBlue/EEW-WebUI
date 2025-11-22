@@ -24,11 +24,11 @@ export const GRID_BOUNDS = {
 
 // 顏色定義
 export const COLORS = {
-  GRID_MAJOR: [100, 181, 246, 100],
+  GRID_MAJOR: [100, 181, 246, 150],
   GRID_MINOR: [100, 181, 246, 50],
   GRID_LABEL: [100, 181, 246, 200],
   STATION_BORDER_DEFAULT: [255, 255, 255, 150],
-  STATION_BORDER_PICK: [255, 235, 59, 255],
+  PICK_SQUARE_BORDER: [255, 235, 59, 120],  // 黃色正方形邊框
   LABEL_TEXT: [255, 255, 255, 255],
   LABEL_OUTLINE: [0, 0, 0, 150]
 };
@@ -41,8 +41,5 @@ export const STATION_RADIUS = {
   MAX_PIXELS: 15
 };
 
-// Pick 邊框寬度
-export const PICK_BORDER_WIDTH = {
-  DEFAULT: 1,
-  ACTIVE: 20
-};
+// Pick 正方形邊框大小（經緯度單位）
+export const PICK_SQUARE_SIZE = 0.03;

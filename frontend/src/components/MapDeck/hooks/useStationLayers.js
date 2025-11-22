@@ -1,19 +1,54 @@
 import { useMemo } from 'react';
-import { ScatterplotLayer } from '@deck.gl/layers';
-import { COLORS, STATION_RADIUS, PICK_BORDER_WIDTH } from '../constants';
+import { ScatterplotLayer, PolygonLayer } from '@deck.gl/layers';
+import { COLORS, STATION_RADIUS, PICK_SQUARE_SIZE } from '../constants';
 import { hasRecentWaveData, hasPickData } from '../utils';
 
 /**
  * 測站點圖層 Hook
  * 繪製地圖上的測站點，根據震度和 Pick 狀態顯示不同樣式
+ * 返回兩個圖層：黃色正方形邊框層 + 測站點層
  */
 export function useStationLayers({ stations, stationIntensities, waveDataMap }) {
     return useMemo(() => {
         if (!stations || stations.length === 0) {
-            return null;
+            return [];
         }
 
-        return new ScatterplotLayer({
+        // 過濾出有 Pick 的測站
+        const stationsWithPick = stations.filter(station => 
+            hasPickData(waveDataMap, station.station)
+        );
+
+        // 黃色正方形邊框層（只顯示有 Pick 的測站）
+        const pickSquareLayer = new PolygonLayer({
+            id: 'pick-square-borders',
+            data: stationsWithPick,
+            pickable: false,
+            stroked: true,
+            filled: false,
+            getPolygon: d => {
+                const lon = d.longitude;
+                const lat = d.latitude;
+                const size = PICK_SQUARE_SIZE;
+                // 創建正方形的四個角
+                return [
+                    [lon - size, lat - size],
+                    [lon + size, lat - size],
+                    [lon + size, lat + size],
+                    [lon - size, lat + size],
+                    [lon - size, lat - size]  // 閉合多邊形
+                ];
+            },
+            getLineColor: COLORS.PICK_SQUARE_BORDER,
+            getLineWidth: 2,
+            lineWidthUnits: 'pixels',
+            updateTriggers: {
+                data: [waveDataMap]
+            }
+        });
+
+        // 測站點層
+        const stationPointsLayer = new ScatterplotLayer({
             id: 'station-points',
             data: stations,
             pickable: true,
@@ -24,7 +59,6 @@ export function useStationLayers({ stations, stationIntensities, waveDataMap }) 
                 const hasData = hasRecentWaveData(waveDataMap, d.station);
 
                 // 只有有波形數據時才填充顏色
-                // 如果只有 Pick 沒有波形，保持透明（但黃色邊框仍會顯示）
                 if (!hasData) return [0, 0, 0, 0];
 
                 const intensityData = stationIntensities[d.station];
@@ -43,31 +77,22 @@ export function useStationLayers({ stations, stationIntensities, waveDataMap }) 
             radiusMaxPixels: STATION_RADIUS.MAX_PIXELS,
             stroked: true,
 
-            // 邊框顏色：有 Pick 時顯示黃色
-            getLineColor: d => {
-                const hasPick = hasPickData(waveDataMap, d.station);
-                return hasPick
-                    ? COLORS.STATION_BORDER_PICK
-                    : COLORS.STATION_BORDER_DEFAULT;
-            },
+            // 邊框顏色：統一使用預設顏色
+            getLineColor: COLORS.STATION_BORDER_DEFAULT,
 
-            // 邊框寬度：有 Pick 時較粗
-            getLineWidth: d => {
-                const hasPick = hasPickData(waveDataMap, d.station);
-                return hasPick
-                    ? PICK_BORDER_WIDTH.ACTIVE
-                    : PICK_BORDER_WIDTH.DEFAULT;
-            },
+            // 邊框寬度：統一寬度
+            getLineWidth: 1,
 
             lineWidthMinPixels: 1,
 
             // 更新觸發器：確保數據變化時重新渲染
             updateTriggers: {
                 getFillColor: [stationIntensities, waveDataMap],
-                getRadius: [stationIntensities],
-                getLineColor: [waveDataMap],
-                getLineWidth: [waveDataMap]
+                getRadius: [stationIntensities]
             }
         });
+
+        // 返回兩個圖層：先繪製正方形邊框，再繪製測站點（這樣測站點會在上層）
+        return [pickSquareLayer, stationPointsLayer];
     }, [stations, stationIntensities, waveDataMap]);
 }
