@@ -69,8 +69,15 @@ export function useWebSocket({ onWavePacket, onPickPacket, onHistoricalData }) {
         } else if (message.event === 'wave_packet') {
           wavePacketBuffer.current.push(message.data);
         } else if (message.event === 'pick_packet') {
-          console.log('[useWebSocket] Received pick_packet:', message.data);
-          pickPacketBuffer.current.push(message.data);
+          // 支援批次格式：後端現在會發送 {picks: [...], count: N, timestamp: ...}
+          if (message.data.picks && Array.isArray(message.data.picks)) {
+            console.log(`[useWebSocket] Received pick_packet batch with ${message.data.count} picks`);
+            pickPacketBuffer.current.push(...message.data.picks);
+          } else {
+            // 向後兼容：單筆 pick 的舊格式
+            console.log('[useWebSocket] Received pick_packet (single):', message.data);
+            pickPacketBuffer.current.push(message.data);
+          }
         } else if (message.event === 'historical_data') {
           console.log('[useWebSocket] Received historical_data:', message.data);
           onHistoricalDataRef.current?.(message.data);

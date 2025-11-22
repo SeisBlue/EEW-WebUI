@@ -21,7 +21,17 @@ function TaiwanMapDeck({
   const [hoverInfo, setHoverInfo] = useState(null);
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
   const [containerHeight, setContainerHeight] = useState(window.innerHeight);
+  const [currentTime, setCurrentTime] = useState(() => Date.now() / 1000); // 當前時間（秒）
   const containerRef = useRef(null);
+
+  // 定期更新 currentTime 以驅動 alpha 遞減動畫
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now() / 1000);
+    }, 1000); // 每秒更新一次
+
+    return () => clearInterval(interval);
+  }, []);
 
   // 監聽容器大小變化
   useEffect(() => {
@@ -63,7 +73,7 @@ function TaiwanMapDeck({
     stationIntensities,
     waveDataMap
   });
-  const pickLayer = usePickLayers({ waveDataMap });
+  const pickLayer = usePickLayers({ waveDataMap, currentTime });
   const hoverLabel = useHoverLabel({ hoverInfo });
 
   // 整合所有圖層

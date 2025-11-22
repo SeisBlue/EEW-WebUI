@@ -407,7 +407,7 @@ async def get_historical_waves_bulk(redis_client, stream_keys, start_time, end_t
         return []
 
     # Slice back into 5-second packets for transmission
-    TIME_WINDOW = 5  # seconds
+    TIME_WINDOW = 30  # seconds
     packet_map = {}  # {time_key: {wave_id: data}}
     
     for i, wave_id in enumerate(wave_ids):
@@ -690,9 +690,9 @@ async def redis_wave_reader():
 
 async def redis_pick_reader():
     """
-    持續從 Redis 讀取 'pick' stream，推送給 WebSocket 管理器。
+    持續從 Redis 讀取 'pick' stream，批次推送給 WebSocket 管理器。
     """
-    logger.info("Starting Redis pick reader...")
+    logger.info("Starting Redis pick reader (batch mode)...")
     redis_client = redis.Redis(**REDIS_CONFIG, decode_responses=False)
     stream_key = "pick"
     last_id = '0-0'
@@ -700,10 +700,13 @@ async def redis_pick_reader():
     while True:
         try:
             # Block 100ms waiting for new messages
-            response = await redis_client.xread({stream_key: last_id}, count=10, block=100)
+            response = await redis_client.xread({stream_key: last_id}, count=100, block=100)
             if not response:
                 continue
 
+            # Collect all picks in this batch
+            pick_batch = []
+            
             for _, messages in response:
                 for msg_id, msg_data in messages:
                     last_id = msg_id
@@ -742,8 +745,19 @@ async def redis_pick_reader():
                             "content": text_data,
                             "timestamp": time.time()
                         }
-                        
-                    await socket_manager.send_pick_packet(packet)
+                    
+                    pick_batch.append(packet)
+            
+            # Send all picks in one batch
+            if pick_batch:
+                batch_packet = {
+                    "picks": pick_batch,
+                    "count": len(pick_batch),
+                    "timestamp": time.time()
+                }
+                await socket_manager.send_pick_packet(batch_packet)
+                logger.info(f"Sent batch of {len(pick_batch)} picks to clients")
+                await asyncio.sleep(1)
 
         except Exception as e:
             # If stream doesn't exist yet, xread might fail or just return empty.
