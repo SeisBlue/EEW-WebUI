@@ -68,10 +68,13 @@ export function usePickPackets({ pickPackets, setWaveDataMap }) {
                     );
 
                     if (!isDuplicate) {
+                        // Store pick data with coordinates from Redis
                         stationData.picks.push({
                             time: pickTime,
                             type: 'P',
-                            id: pickData.pickid
+                            id: pickData.pickid,
+                            latitude: parseFloat(pickData.lat),
+                            longitude: parseFloat(pickData.lon)
                         });
 
                         // Sort picks by time to ensure cleanup logic works correctly

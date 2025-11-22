@@ -1,54 +1,20 @@
 import { useMemo } from 'react';
-import { ScatterplotLayer, PolygonLayer } from '@deck.gl/layers';
-import { COLORS, STATION_RADIUS, PICK_SQUARE_SIZE } from '../constants';
-import { hasRecentWaveData, hasPickData } from '../utils';
+import { ScatterplotLayer } from '@deck.gl/layers';
+import { COLORS, STATION_RADIUS } from '../constants';
+import { hasRecentWaveData } from '../utils';
 
 /**
  * 測站點圖層 Hook
- * 繪製地圖上的測站點，根據震度和 Pick 狀態顯示不同樣式
- * 返回兩個圖層：黃色正方形邊框層 + 測站點層
+ * 繪製地圖上的測站點，根據震度顯示不同樣式
  */
 export function useStationLayers({ stations, stationIntensities, waveDataMap }) {
     return useMemo(() => {
         if (!stations || stations.length === 0) {
-            return [];
+            return null;
         }
 
-        // 過濾出有 Pick 的測站
-        const stationsWithPick = stations.filter(station => 
-            hasPickData(waveDataMap, station.station)
-        );
-
-        // 黃色正方形邊框層（只顯示有 Pick 的測站）
-        const pickSquareLayer = new PolygonLayer({
-            id: 'pick-square-borders',
-            data: stationsWithPick,
-            pickable: false,
-            stroked: true,
-            filled: false,
-            getPolygon: d => {
-                const lon = d.longitude;
-                const lat = d.latitude;
-                const size = PICK_SQUARE_SIZE;
-                // 創建正方形的四個角
-                return [
-                    [lon - size, lat - size],
-                    [lon + size, lat - size],
-                    [lon + size, lat + size],
-                    [lon - size, lat + size],
-                    [lon - size, lat - size]  // 閉合多邊形
-                ];
-            },
-            getLineColor: COLORS.PICK_SQUARE_BORDER,
-            getLineWidth: 2,
-            lineWidthUnits: 'pixels',
-            updateTriggers: {
-                data: [waveDataMap]
-            }
-        });
-
         // 測站點層
-        const stationPointsLayer = new ScatterplotLayer({
+        return new ScatterplotLayer({
             id: 'station-points',
             data: stations,
             pickable: true,
@@ -91,8 +57,5 @@ export function useStationLayers({ stations, stationIntensities, waveDataMap }) 
                 getRadius: [stationIntensities]
             }
         });
-
-        // 返回兩個圖層：先繪製正方形邊框，再繪製測站點（這樣測站點會在上層）
-        return [pickSquareLayer, stationPointsLayer];
     }, [stations, stationIntensities, waveDataMap]);
 }

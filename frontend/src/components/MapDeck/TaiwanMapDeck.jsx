@@ -7,6 +7,7 @@ import { MAP_STYLE, INITIAL_VIEW_STATE } from './constants';
 import { calculateLatitudeRange } from './utils';
 import { useMapGridLayers } from './hooks/useMapGridLayers';
 import { useStationLayers } from './hooks/useStationLayers';
+import { usePickLayers } from './hooks/usePickLayers';
 import { useHoverLabel } from './hooks/useHoverLabel';
 import './TaiwanMapDeck.css';
 
@@ -57,17 +58,19 @@ function TaiwanMapDeck({
 
   // 使用 Hooks 獲取各個圖層
   const gridLayers = useMapGridLayers();
-  const stationLayers = useStationLayers({
+  const stationLayer = useStationLayers({
     stations,
     stationIntensities,
     waveDataMap
   });
+  const pickLayer = usePickLayers({ waveDataMap });
   const hoverLabel = useHoverLabel({ hoverInfo });
 
   // 整合所有圖層
   const allLayers = [
     ...gridLayers,
-    ...stationLayers,  // stationLayers 現在是陣列，包含正方形邊框層和測站點層
+    stationLayer,
+    pickLayer,  // Pick 圖層：獨立於測站圖層
     hoverLabel
   ].filter(Boolean);
 

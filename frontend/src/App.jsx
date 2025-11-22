@@ -237,7 +237,7 @@ function App() {
               ))}
             </ul>
           </section>
-          
+
           {/* Detail View moved here */}
           <section className="section report-detail-section">
             <div className="section-header">
