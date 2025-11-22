@@ -25,8 +25,8 @@ export function getIntensityValue(intensityStr) {
  */
 export function getIntensityColor(intensity) {
     switch (intensity) {
-        case "0": return [255, 255, 255];     // #ffffff 白色
-        case "1": return [51, 255, 221];      // #33FFDD 青色
+        case "0": return [255, 255, 255, 100];     // #ffffff 白色
+        case "1": return [51, 255, 221, 200];      // #33FFDD 青色
         case "2": return [52, 255, 50];       // #34ff32 綠色
         case "3": return [254, 253, 50];      // #fefd32 黃色
         case "4": return [254, 133, 50];      // #fe8532 橙色

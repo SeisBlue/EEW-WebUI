@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { pgaToIntensity, getIntensityColor } from '../utils';
+import { pgaToIntensity } from '../utils';
 import { useWavePackets } from './useWavePackets';
 import { usePickPackets } from './usePickPackets';
 
@@ -13,6 +13,8 @@ const DATA_RETENTION_WINDOW = 120; // 資料暫存時間窗口（秒）
  * @param {Array} options.wavePackets - Array of wave packets
  * @param {Array} options.pickPackets - Array of pick packets
  * @returns {Object} { waveDataMap, stationIntensities, mapStationIntensities }
+ *   - stationIntensities: { [stationCode]: { pga, intensity } }
+ *   - 各組件可根據 intensity 自行決定顯示顏色
  */
 export function useWaveformData({ wavePackets, pickPackets }) {
   const [waveDataMap, setWaveDataMap] = useState({});
@@ -22,6 +24,7 @@ export function useWaveformData({ wavePackets, pickPackets }) {
   usePickPackets({ pickPackets, setWaveDataMap });
 
   // Derive station intensities from waveDataMap
+  // 只提供 PGA 和震度，不計算顏色
   const stationIntensities = useMemo(() => {
     const intensities = {};
     Object.keys(waveDataMap).forEach(stationCode => {
@@ -35,12 +38,11 @@ export function useWaveformData({ wavePackets, pickPackets }) {
         .reduce((max, item) => Math.max(max, item.pga), 0);
 
       const intensity = pgaToIntensity(maxPga);
-      const color = getIntensityColor(intensity);
 
       intensities[stationCode] = {
         pga: maxPga,
-        intensity: intensity,
-        color: color
+        intensity: intensity
+        // 移除 color，讓各組件自行決定如何根據 intensity 顯示顏色
       };
     });
     return intensities;
