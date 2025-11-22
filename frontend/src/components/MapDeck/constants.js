@@ -9,7 +9,7 @@ export const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-
 export const INITIAL_VIEW_STATE = {
   longitude: 120.95,
   latitude: 23.6,
-  zoom: 6.5,
+  zoom: 6.8,
   pitch: 0,
   bearing: 0
 };

@@ -177,7 +177,7 @@ async def websocket_endpoint(websocket: WebSocket):
             elif event == "request_historical_data":
                 # Handle request for historical data (last 120 seconds)
                 stations = payload.get("stations", [])
-                window_seconds = payload.get("window_seconds", 120)
+                window_seconds = payload.get("window_seconds", 121)
                 
                 if not stations:
                     continue
