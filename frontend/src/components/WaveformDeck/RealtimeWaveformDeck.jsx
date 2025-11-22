@@ -17,7 +17,6 @@ function RealtimeWaveformDeck({
 }) {
   const [renderTrigger, setRenderTrigger] = useState(Date.now());
   const panelRef = useRef(null);
-  const animationFrameRef = useRef(null);
   const [dimensions, setDimensions] = useState(null);
 
   // baseTime 固定為組件初始化時往前推 120 秒
@@ -28,19 +27,17 @@ function RealtimeWaveformDeck({
     return now - (DEFAULT_DISPLAY_WINDOW * 1000);
   }, []); // 空依賴陣列，只在初始化時計算一次
 
-  // 使用 requestAnimationFrame 實現平滑滾動
+  // 使用固定更新頻率實現平滑滾動（降低 GPU 負擔）
+  // 20 FPS 足夠流暢，同時大幅減少渲染壓力
   useEffect(() => {
-    const animate = () => {
-      setRenderTrigger(Date.now());
-      animationFrameRef.current = requestAnimationFrame(animate);
-    };
+    const UPDATE_INTERVAL = 500; // 50ms = 20 FPS
 
-    animationFrameRef.current = requestAnimationFrame(animate);
+    const intervalId = setInterval(() => {
+      setRenderTrigger(Date.now());
+    }, UPDATE_INTERVAL);
 
     return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
+      clearInterval(intervalId);
     };
   }, []);
 
