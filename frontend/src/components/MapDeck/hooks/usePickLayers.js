@@ -61,8 +61,8 @@ export function usePickLayers({ waveDataMap, currentTime }) {
                 // 計算 pick 的年齡（秒）
                 const age = now - d.pickTime;
 
-                // Alpha 從 255 開始，每秒減 5，最小為 100
-                const alpha = Math.max(100, 255 - age * 5);
+                // Alpha 從 255 開始，每秒減 20，最小為 50
+                const alpha = Math.max(50, 255 - age * 20);
 
                 // Debug: 輸出時間信息
                 if (Math.random() < 0.1) { // 只隨機輸出 10% 避免太多日誌
