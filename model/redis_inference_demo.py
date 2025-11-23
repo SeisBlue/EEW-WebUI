@@ -15,7 +15,7 @@ from ttsam import get_full_model
 from redis_adapter import RedisAdapter
 
 # ============ Configuration ============
-REDIS_HOST = 'localhost'
+REDIS_HOST = 'redis'
 REDIS_PORT = 6379
 REDIS_DB = 0
 
@@ -24,9 +24,10 @@ VS30_REPO_ID = "SeisBlue/TaiwanVs30"
 VS30_FILENAME = "Vs30ofTaiwan.nc"
 MODEL_REPO_ID = "SeisBlue/TTSAM"
 MODEL_FILENAME = "ttsam_trained_model_11.pt"
+MODEL_DIR = "./weights"
 
-SITE_INFO_FILE = "../station/site_info.csv"
-TARGET_FILE = "../station/eew_target.csv"
+SITE_INFO_FILE = "./station/site_info.csv"
+TARGET_FILE = "./station/eew_target.csv"
 
 # Signal Processing Constants
 SAMPLING_RATE = 100
@@ -37,6 +38,7 @@ MIN_DURATION = 30.0
 tree = None
 vs30_table = None
 site_info = None
+constant_dict = {}
 target_dict = None
 model = None
 
@@ -46,7 +48,7 @@ def load_vs30():
     global tree, vs30_table
     try:
         logger.info("Loading Vs30 data from Hugging Face...")
-        vs30_file = hf_hub_download(repo_id=VS30_REPO_ID, filename=VS30_FILENAME, repo_type="dataset")
+        vs30_file = hf_hub_download(repo_id=VS30_REPO_ID, filename=VS30_FILENAME, repo_type="dataset", local_dir=MODEL_DIR)
         ds = xr.open_dataset(vs30_file)
         lat_flat = ds["lat"].values.flatten()
         lon_flat = ds["lon"].values.flatten()
@@ -68,12 +70,21 @@ def get_vs30(lat, lon, user_vs30=600):
     return float(vs30)
 
 def load_station_info():
-    global site_info
+    global site_info, constant_dict
     try:
         logger.info(f"Loading {SITE_INFO_FILE}...")
-        site_info = pd.read_csv(SITE_INFO_FILE)
-        site_info = site_info.drop_duplicates(subset=["Station"]).reset_index(drop=True)
-        logger.info(f"Loaded {len(site_info)} stations.")
+        df = pd.read_csv(SITE_INFO_FILE)
+        
+        # Populate constant_dict: (Station, Channel) -> Constant
+        # Assuming columns "Station", "Channel", "Constant" exist
+        if "Constant" in df.columns and "Channel" in df.columns:
+            constant_dict = df.set_index(["Station", "Channel"])["Constant"].to_dict()
+        else:
+            logger.warning("Column 'Constant' or 'Channel' not found in site_info.csv. Using default constant.")
+            constant_dict = {}
+            
+        site_info = df.drop_duplicates(subset=["Station"]).reset_index(drop=True)
+        logger.info(f"Loaded {len(site_info)} stations and {len(constant_dict)} constants.")
     except Exception as e:
         logger.error(f"Failed to load site info: {e}")
 
@@ -91,25 +102,25 @@ def load_model():
     global model
     try:
         logger.info("Loading TTSAM model...")
-        model_path = hf_hub_download(repo_id=MODEL_REPO_ID, filename=MODEL_FILENAME)
+        model_path = hf_hub_download(repo_id=MODEL_REPO_ID, filename=MODEL_FILENAME, local_dir=MODEL_DIR)
         model = get_full_model(model_path)
         model.eval() # Set to evaluation mode
         logger.info("Model loaded successfully.")
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
 
-def lowpass(data, freq=10, df=100, corners=4):
+def lowpass(data, freq=10, df=100, corners=4, axis=0):
     fe = 0.5 * df
     f = freq / fe
     if f > 1:
         f = 1.0
     z, p, k = iirfilter(corners, f, btype="lowpass", ftype="butter", output="zpk")
     sos = zpk2sos(z, p, k)
-    return sosfilt(sos, data)
+    return sosfilt(sos, data, axis=axis)
 
-def signal_processing(waveform):
-    data = detrend(waveform, type="constant")
-    data = lowpass(data, freq=10)
+def signal_processing(waveform, axis=0):
+    data = detrend(waveform, axis=axis, type="constant")
+    data = lowpass(data, freq=10, axis=axis)
     return data
 
 # ============ Main Logic ============
@@ -122,117 +133,161 @@ def get_recent_picks(redis_adapter, lookback_seconds=60, max_picks=100):
     now = time.time()
     start_time = now - lookback_seconds
     
+    # Adapter now handles sorting and deduplication
     picks = redis_adapter.get_picks(start_time, now, max_picks=max_picks)
-    
-    # Sort by pick_time (ascending)
-    for p in picks:
-        try:
-            p['pick_time_float'] = float(p['pick_time'])
-        except:
-            p['pick_time_float'] = 0.0
-            
-    picks.sort(key=lambda x: x['pick_time_float'])
     
     return picks
 
+# Constants
+CHANNEL_MAP = {
+    'Z': ['HLZ', 'EHZ', 'Z'],
+    'N': ['HLN', 'EHN', 'N', '1'],
+    'E': ['HLE', 'EHE', 'E', '2']
+}
+ALL_CHANNELS = list(set([ch for sublist in CHANNEL_MAP.values() for ch in sublist]))
+
 def fetch_and_process_waveforms_from_picks(redis_adapter, picks, duration=30):
     """
-    Fetch waveforms based on provided picks.
+    Fetch waveforms based on provided picks using bulk fetch.
     Selects top 25 unique stations from the sorted picks.
     """
+    # Picks are already unique and sorted from adapter
+    selected_picks = picks[:25]
+    
+    if not selected_picks:
+        return [], [], []
+        
+    logger.info(f"Selected {len(selected_picks)} stations from picks.")
+
+    # 2. Prepare for bulk fetch
+    triggered_stations = [p.get('station') for p in selected_picks]
+    
+    # Determine time range
+    min_pick_time = min(p.get('pick_time_float') for p in selected_picks)
+    max_pick_time = max(p.get('pick_time_float') for p in selected_picks)
+    
+    fetch_start_time = min_pick_time
+    fetch_end_time = max_pick_time + duration + 1 # +1 buffer
+
+    # 3. Bulk Fetch
+    headers, data_matrix = redis_adapter.get_waveforms_bulk(
+        triggered_stations, 
+        fetch_start_time, 
+        fetch_end_time,
+        channels=ALL_CHANNELS,
+        sampling_rate=SAMPLING_RATE
+    )
+    
+    # Mappings
+    channel_to_idx = {ch: i for i, ch in enumerate(ALL_CHANNELS)}
+    station_to_idx = {h['station']: i for i, h in enumerate(headers)}
+
     waveforms = []
     station_info_list = []
     valid_stations = []
-    
-    unique_stations = set()
-    selected_picks = []
-    
-    # Filter for unique stations, up to 25
-    for p in picks:
-        sta = p.get('station')
-        if sta not in unique_stations:
-            unique_stations.add(sta)
-            selected_picks.append(p)
-            if len(selected_picks) >= 25:
-                break
-    
-    logger.info(f"Selected {len(selected_picks)} stations from picks.")
 
-    channel_map = {
-        'Z': ['HLZ', 'EHZ', 'Z'],
-        'N': ['HLN', 'EHN', 'N', '1'],
-        'E': ['HLE', 'EHE', 'E', '2']
-    }
-
+    # 4. Process each station
     for p in selected_picks:
         station_code = p.get('station')
         pick_time = p.get('pick_time_float')
         
-        start_time = pick_time
-        end_time = start_time + duration
-        
-        # Find station in site_info
-        station_row = site_info[site_info['Station'] == station_code]
-        if station_row.empty:
-            logger.warning(f"Station {station_code} not found in site_info.")
+        if station_code not in station_to_idx:
             continue
             
-        lat = station_row.iloc[0]['Latitude']
-        lon = station_row.iloc[0]['Longitude']
-        elev = station_row.iloc[0]['Elevation']
-
-        # Fetch Z component
-        z_data = None
-        for ch in channel_map['Z']:
-            z_data = redis_adapter.get_waveform_data(station_code, ch, start_time, end_time)
-            if z_data is not None and len(z_data) > 0:
-                break
+        idx = station_to_idx[station_code]
+        station_data = data_matrix[idx] # (Time, N_channels)
         
-        if z_data is None:
-            # logger.debug(f"Station {station_code}: No Z component found.")
+        # Calculate offset
+        time_offset_seconds = pick_time - fetch_start_time
+        start_sample = int(time_offset_seconds * SAMPLING_RATE)
+        end_sample = start_sample + TARGET_LENGTH
+        
+        # Slice window
+        s_start = max(0, start_sample)
+        s_end = min(len(station_data), end_sample)
+        
+        if s_end <= s_start:
             continue
-
-        # Fetch N component
-        n_data = None
-        for ch in channel_map['N']:
-            n_data = redis_adapter.get_waveform_data(station_code, ch, start_time, end_time)
-            if n_data is not None and len(n_data) > 0:
-                break
+            
+        window_data = station_data[s_start:s_end, :]
         
-        # Fetch E component
-        e_data = None
-        for ch in channel_map['E']:
-            e_data = redis_adapter.get_waveform_data(station_code, ch, start_time, end_time)
-            if e_data is not None and len(e_data) > 0:
-                break
+        # Pad locally if needed
+        current_len = window_data.shape[0]
+        if current_len < TARGET_LENGTH:
+            padded = np.zeros((TARGET_LENGTH, len(ALL_CHANNELS)), dtype=np.int32)
+            dest_start = max(0, -start_sample)
+            dest_end = dest_start + current_len
+            if dest_end <= TARGET_LENGTH:
+                padded[dest_start:dest_end, :] = window_data
+                window_data = padded
+            else:
+                continue
+        elif current_len > TARGET_LENGTH:
+             window_data = window_data[:TARGET_LENGTH, :]
 
-        # Handle missing components
-        if n_data is None:
+        # Select best channels
+        def get_channel_data(priority_list):
+            for ch in priority_list:
+                if ch in channel_to_idx:
+                    ch_idx = channel_to_idx[ch]
+                    trace = window_data[:, ch_idx]
+                    if np.any(trace != 0):
+                        return trace, ch
+            return None, None
+
+        z_data, z_ch = get_channel_data(CHANNEL_MAP['Z'])
+        n_data, n_ch = get_channel_data(CHANNEL_MAP['N'])
+        e_data, e_ch = get_channel_data(CHANNEL_MAP['E'])
+
+        if z_data is None:
+            continue
+            
+        # Fallback for missing components
+        if n_data is None: 
             n_data = z_data.copy()
-        if e_data is None:
+            n_ch = z_ch # Use Z constant if N is missing/copied? Or default? 
+                        # If we copy Z data, we probably should use Z constant or just treat it as is.
+                        # But strictly speaking, if we use Z data for N, it's already scaled by Z constant if we scale before copy.
+                        # Let's scale AFTER copy to be safe, but wait, if we copy raw counts, we need N constant.
+                        # If N is missing, we don't have N constant. 
+                        # Let's assume if missing, we use default constant for the "virtual" channel or just Z's constant?
+                        # Using Z's constant seems safer if we are copying Z's data.
+        
+        if e_data is None: 
             e_data = z_data.copy()
+            e_ch = z_ch
 
-        # Signal Processing
+        # Apply constants
+        def apply_constant(data, station, channel):
+            if channel is None:
+                return data * 3.2e-6
+            const = constant_dict.get((station, channel), 3.2e-6)
+            return data * const
+
+        z_data = apply_constant(z_data, station_code, z_ch)
+        n_data = apply_constant(n_data, station_code, n_ch)
+        e_data = apply_constant(e_data, station_code, e_ch)
+
+        # Stack and Process
+        waveform_3c = np.stack([z_data, n_data, e_data], axis=1) # (3000, 3)
+        
         try:
-            z_data = signal_processing(z_data)
-            n_data = signal_processing(n_data)
-            e_data = signal_processing(e_data)
+            waveform_3c = signal_processing(waveform_3c, axis=0)
         except Exception as e:
             logger.warning(f"Signal processing failed for {station_code}: {e}")
             continue
 
-        # Pad/Truncate to TARGET_LENGTH
-        waveform_3c = np.zeros((TARGET_LENGTH, 3))
-        z_len = min(len(z_data), TARGET_LENGTH)
-        n_len = min(len(n_data), TARGET_LENGTH)
-        e_len = min(len(e_data), TARGET_LENGTH)
-
-        waveform_3c[:z_len, 0] = z_data[:z_len]
-        waveform_3c[:n_len, 1] = n_data[:n_len]
-        waveform_3c[:e_len, 2] = e_data[:e_len]
-
         waveforms.append(waveform_3c)
         
+        # Metadata
+        station_row = site_info[site_info['Station'] == station_code]
+        if not station_row.empty:
+            lat = station_row.iloc[0]['Latitude']
+            lon = station_row.iloc[0]['Longitude']
+            elev = station_row.iloc[0]['Elevation']
+        else:
+            lat, lon, elev = 0, 0, 0
+
         vs30 = get_vs30(lat, lon)
         station_info_list.append([lat, lon, elev, vs30])
         valid_stations.append({
@@ -245,7 +300,45 @@ def fetch_and_process_waveforms_from_picks(redis_adapter, picks, duration=30):
 
     return waveforms, station_info_list, valid_stations
 
-def run_inference(waveforms, station_info_list):
+def calculate_intensity(pga):
+    """
+    Calculate CWA Seismic Intensity based on PGA (m/s^2).
+    PGA input is in m/s^2.
+    CWA Scale (2020):
+    0: < 0.008 m/s^2 (0.8 gal)
+    1: 0.008 - 0.025 m/s^2 (0.8 - 2.5 gal)
+    2: 0.025 - 0.080 m/s^2 (2.5 - 8.0 gal)
+    3: 0.080 - 0.250 m/s^2 (8.0 - 25.0 gal)
+    4: 0.250 - 0.800 m/s^2 (25.0 - 80.0 gal)
+    5-: 0.80 - 1.40 m/s^2 (80 - 140 gal)
+    5+: 1.40 - 2.50 m/s^2 (140 - 250 gal)
+    6-: 2.50 - 4.40 m/s^2 (250 - 440 gal)
+    6+: 4.40 - 8.00 m/s^2 (440 - 800 gal)
+    7: > 8.00 m/s^2 (> 800 gal)
+    """
+    # Convert to gal (cm/s^2) for easier comparison with standard tables if needed, 
+    # but here we use m/s^2 directly as per thresholds.
+    # Thresholds in m/s^2:
+    if pga < 0.008: return "0"
+    if pga < 0.025: return "1"
+    if pga < 0.080: return "2"
+    if pga < 0.250: return "3"
+    if pga < 0.800: return "4"
+    if pga < 1.400: return "5-"
+    if pga < 2.500: return "5+"
+    if pga < 4.400: return "6-"
+    if pga < 8.000: return "6+"
+    return "7"
+
+def intensity_to_rank(intensity):
+    """Convert intensity string to numeric rank for sorting."""
+    intensity_map = {
+        "0": 0, "1": 1, "2": 2, "3": 3, "4": 4,
+        "5-": 5, "5+": 6, "6-": 7, "6+": 8, "7": 9
+    }
+    return intensity_map.get(intensity, 0)
+
+def run_inference(waveforms, station_info_list, redis_adapter=None):
     if not waveforms:
         logger.warning("No waveforms to process.")
         return
@@ -303,13 +396,33 @@ def run_inference(waveforms, station_info_list):
         all_pga_list.extend(batch_pga[:len(target_names)])
         all_target_names.extend(target_names)
 
-    # Output results (Top 5 PGA)
+    # Output results sorted by intensity (highest to lowest)
     results = list(zip(all_target_names, all_pga_list))
-    results.sort(key=lambda x: x[1], reverse=True)
+    # Add intensity to each result for sorting
+    results_with_intensity = [(name, pga, calculate_intensity(pga)) for name, pga in results]
+    # Sort by intensity rank (highest first), then by PGA within same intensity
+    results_with_intensity.sort(key=lambda x: (intensity_to_rank(x[2]), x[1]), reverse=True)
     
-    logger.info("Inference Complete. Top 5 Predicted PGA:")
-    for name, pga in results[:5]:
-        logger.info(f"{name}: {pga:.4f} m/s²")
+    max_pga = results_with_intensity[0][1] if results_with_intensity else 0.0
+    max_intensity = results_with_intensity[0][2] if results_with_intensity else "0"
+    logger.info(f"Inference Complete. Max PGA: {max_pga:.4f} m/s² (Intensity: {max_intensity}). Top 5 Predicted Intensity:")
+    for name, pga, intensity in results_with_intensity[:5]:
+        logger.info(f"{name}: {intensity}")
+        
+    # Publish to Redis
+    if redis_adapter:
+        publish_data = []
+        timestamp = time.time()
+        for name, pga, intensity in results_with_intensity:
+            publish_data.append({
+                'station': name,
+                'pga': f"{pga:.6f}",
+                'intensity': intensity,
+                'timestamp': f"{timestamp:.6f}"
+            })
+        
+        redis_adapter.publish_inference_results("ttsam", publish_data)
+        logger.info(f"Published {len(publish_data)} results to Redis.")
 
 def main():
     # Initialize
@@ -325,26 +438,31 @@ def main():
 
     logger.info("Starting Redis Inference Demo (Pick-Triggered)...")
     
-    # Loop to simulate real-time or just run once
-    # For demo, let's try to fetch picks from the last minute
-    
-    lookback = 60 # seconds
-    logger.info(f"Fetching picks from last {lookback} seconds...")
-    
-    picks = get_recent_picks(redis_adapter, lookback_seconds=lookback)
-    
-    if picks:
-        logger.info(f"Found {len(picks)} picks.")
-        waveforms, station_info_list, _ = fetch_and_process_waveforms_from_picks(
-            redis_adapter, picks, duration=30
-        )
-        
-        if waveforms:
-            run_inference(waveforms, station_info_list)
-        else:
-            logger.warning("No waveforms could be extracted from the picks.")
-    else:
-        logger.warning("No picks found in the last 60 seconds. Waiting for picks...")
+    try:
+        while True:
+            # Loop to simulate real-time
+            lookback = 10 # seconds
+            # logger.info(f"Fetching picks from last {lookback} seconds...")
+            
+            picks = get_recent_picks(redis_adapter, lookback_seconds=lookback)
+            
+            if len(picks) >= 5:
+                logger.info(f"Found {len(picks)} picks.")
+                waveforms, station_info_list, _ = fetch_and_process_waveforms_from_picks(
+                    redis_adapter, picks, duration=30
+                )
+                
+                if waveforms:
+                    run_inference(waveforms, station_info_list, redis_adapter=redis_adapter)
+                else:
+                    logger.warning("No waveforms could be extracted from the picks.")
+            else:
+                logger.info(f"{len(picks)} picks found in the last 10 seconds.")
+
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        logger.info("Stopping inference demo.")
 
 if __name__ == "__main__":
     main()

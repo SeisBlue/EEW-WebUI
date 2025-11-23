@@ -66,6 +66,8 @@ class RedisAdapter:
     def get_picks(self, start_time, end_time, max_picks=100):
         """
         Fetch pick data from the 'pick' Redis Stream within a specified time range.
+        Returns a list of unique picks (one per station), sorted by pick_time ascending.
+        Deduplication logic: Keep the pick with the highest 'update_sec'.
         """
         if not self.redis_client:
             logger.error("Redis client not available.")
@@ -76,31 +78,75 @@ class RedisAdapter:
         end_id = f"{int(end_time * 1000)}-0"
 
         try:
-            messages = self.redis_client.xrange(stream_key, min=start_id, max=end_id, count=max_picks)
-            picks = []
+            messages = self.redis_client.xrange(stream_key, min=start_id, max=end_id, count=max_picks * 5) # Fetch more to account for updates
+            
+            best_picks = {} # {station: pick_data}
+
             for _, message in messages:
                 if b'data' in message:
                     try:
                         pick_data = json.loads(message[b'data'])
-                        picks.append(pick_data)
+                        
+                        # Ensure pick_time_float exists
+                        if 'pick_time' in pick_data:
+                            pick_data['pick_time_float'] = float(pick_data['pick_time'])
+                        else:
+                            pick_data['pick_time_float'] = 0.0
+                            
+                        # Ensure update_sec exists
+                        if 'update_sec' in pick_data:
+                            pick_data['update_sec'] = int(pick_data['update_sec'])
+                        else:
+                            pick_data['update_sec'] = 0
+                            
+                        sta = pick_data.get('station')
+                        if sta:
+                            if sta not in best_picks:
+                                best_picks[sta] = pick_data
+                            else:
+                                # Keep the one with larger update_sec
+                                if pick_data['update_sec'] > best_picks[sta]['update_sec']:
+                                    best_picks[sta] = pick_data
+                                    
                     except Exception as e:
                         logger.warning(f"Failed to parse pick data: {e}. Raw message: {message}")
-            return picks
+            
+            # Convert to list and sort by pick_time
+            unique_picks = list(best_picks.values())
+            unique_picks.sort(key=lambda x: x['pick_time_float'])
+            
+            # Limit to max_picks (though usually we want all valid stations in the window)
+            # If max_picks is strictly for the number of stations to return:
+            if len(unique_picks) > max_picks:
+                unique_picks = unique_picks[:max_picks]
+                        
+            return unique_picks
 
         except Exception as e:
             logger.error(f"Error fetching picks from Redis: {e}")
             return []
             
-    def get_waveforms_bulk(self, stream_keys, start_time, end_time):
+    def get_waveforms_bulk(self, stations, start_time, end_time, channels=['*Z', '*N', '*E'], sampling_rate=100):
         """
-        Fetch waveform data for multiple streams in parallel using Redis Pipeline.
-        Returns a dictionary {stream_key: numpy_array or None}
+        Fetch waveform data for multiple stations and channels in parallel using Redis Pipeline.
+        Returns (station_headers, data_matrix)
+        - station_headers: list of dicts [{'station': 'A001'}, ...]
+        - data_matrix: 3D numpy array of shape (N_stations, N_samples, N_channels)
+        All arrays are padded/trimmed to exactly int((end_time - start_time) * sampling_rate).
         """
-        if not self.redis_client or not stream_keys:
-            return {}
+        if not self.redis_client or not stations:
+            return [], np.array([])
 
         start_id = f"{int(start_time * 1000)}-0"
         end_id = f"{int(end_time * 1000)}-0"
+        
+        target_length = int((end_time - start_time) * sampling_rate)
+        
+        # Generate all keys
+        stream_keys = []
+        for station in stations:
+            for channel in channels:
+                stream_keys.append(f"wave:{station}:{channel}")
         
         pipeline = self.redis_client.pipeline()
         for key in stream_keys:
@@ -109,96 +155,110 @@ class RedisAdapter:
         # Execute all commands in one go
         results = pipeline.execute()
         
-        parsed_results = {}
-        for key, messages in zip(stream_keys, results):
-            if not messages:
-                parsed_results[key] = None
-                continue
-                
-            waveform_chunks = []
-            for _, message in messages:
-                if b'data' in message:
-                    waveform_chunks.append(np.frombuffer(message[b'data'], dtype=np.int32))
-            
-            if waveform_chunks:
-                parsed_results[key] = np.concatenate(waveform_chunks)
-            else:
-                parsed_results[key] = None
-                
-        return parsed_results
-
-    def fetch_station_waves_optimized(self, stations, start_time, end_time, channels=['HLZ', 'HLN', 'HLE']):
-        """
-        Optimized fetch:
-        1. Predicts keys (wave:{station}:{channel}) to avoid 'scan_iter'.
-        2. Pipelines all requests.
-        3. Returns (station_headers, data_matrix) 
-           - station_headers: list of dicts [{'station': 'A001'}, ...]
-           - data_matrix: 3D numpy array of shape (N_stations, max_len, N_channels)
-        """
-        if not self.redis_client or not stations:
-            return [], np.array([])
-
-        # 1. Generate all potential keys
-        stream_keys = []
-        # Map to retrieve data later: station_idx -> channel_idx -> key
-        # But simpler: just rebuild keys during processing
-        for station in stations:
-            for channel in channels:
-                key = f"wave:{station}:{channel}"
-                stream_keys.append(key)
-
-        # 2. Bulk fetch
-        raw_data = self.get_waveforms_bulk(stream_keys, start_time, end_time)
-        
-        # 3. Determine max length for padding
-        max_len = 0
-        has_data = False
-        for w in raw_data.values():
-            if w is not None and len(w) > 0:
-                max_len = max(max_len, len(w))
-                has_data = True
-        
-        if not has_data:
-            return [], np.array([])
-            
-        # 4. Build 3D array (Stations, Time, Channels)
+        # Build Matrix
         n_stations = len(stations)
         n_channels = len(channels)
+        data_matrix = np.zeros((n_stations, target_length, n_channels), dtype=np.int32)
         
-        # Initialize with zeros (padding)
-        data_matrix = np.zeros((n_stations, max_len, n_channels), dtype=np.int32)
-        station_headers = []
+        # Iterate through results and fill matrix
+        # results is flat list corresponding to stream_keys
+        # stream_keys order: station 0 chan 0, station 0 chan 1, ...
         
-        valid_station_indices = []
+        result_idx = 0
+        for i in range(n_stations):
+            for j in range(n_channels):
+                messages = results[result_idx]
+                result_idx += 1
+                
+                if not messages:
+                    continue
+                    
+                waveform_chunks = []
+                for _, message in messages:
+                    if b'data' in message:
+                        waveform_chunks.append(np.frombuffer(message[b'data'], dtype=np.int32))
+                
+                if not waveform_chunks:
+                    continue
+
+                full_wave = np.concatenate(waveform_chunks)
+                current_len = len(full_wave)
+                
+                if current_len == target_length:
+                    data_matrix[i, :, j] = full_wave
+                elif current_len > target_length:
+                    data_matrix[i, :, j] = full_wave[:target_length]
+                else:
+                    # Pad with zeros at the end
+                    data_matrix[i, :current_len, j] = full_wave
         
-        for i, station in enumerate(stations):
-            station_has_data = False
-            for j, channel in enumerate(channels):
-                key = f"wave:{station}:{channel}"
-                w = raw_data.get(key)
-                if w is not None and len(w) > 0:
-                    length = len(w)
-                    # Fill data into the matrix
-                    # Truncate if for some reason it exceeds max_len (shouldn't happen based on logic above)
-                    data_matrix[i, :length, j] = w[:max_len]
-                    station_has_data = True
+        station_headers = [{'station': s} for s in stations]
+        return station_headers, data_matrix
+
+    def scan_active_stations(self, match_pattern="wave:*:*"):
+        """
+        Scan Redis for active stations and channels.
+        Returns a dictionary {station: [channel1, channel2, ...]}
+        """
+        if not self.redis_client:
+            return {}
             
-            if station_has_data:
-                station_headers.append({'station': station})
-                valid_station_indices.append(i)
-        
-        # Filter out stations that had absolutely no data?
-        # User asked for "header 合併", usually implies 1-to-1 with the array rows.
-        # If we keep the array shape as (len(stations), ...), we might have empty rows.
-        # Let's filter to only valid stations to be clean.
-        
-        if not valid_station_indices:
-            return [], np.array([])
+        active_stations = {}
+        try:
+            # Use scan_iter for memory efficiency
+            for key in self.redis_client.scan_iter(match=match_pattern):
+                # key is bytes in some redis clients, but we set decode_responses=False
+                # Wait, in __init__ decode_responses=False. So keys are bytes.
+                if isinstance(key, bytes):
+                    key_str = key.decode('utf-8')
+                else:
+                    key_str = key
+                    
+                parts = key_str.split(':')
+                if len(parts) == 3:
+                    _, station, channel = parts
+                    if station not in active_stations:
+                        active_stations[station] = []
+                    active_stations[station].append(channel)
+                    
+        except Exception as e:
+            logger.error(f"Error scanning active stations: {e}")
             
-        final_data = data_matrix[valid_station_indices]
+        return active_stations
+
+    def publish_inference_results(self, model_tag, results):
+        """
+        Publish inference results to Redis Stream 'inference:{model_tag}:results'.
+        results: list of dicts, e.g. [{'station': 'A', 'pga': 0.1, 'intensity': 1, 'timestamp': 1234567890}]
+        """
+        if not self.redis_client or not results:
+            return
+
+        stream_key = f"inference:{model_tag}:results"
+        pipeline = self.redis_client.pipeline()
         
-        return station_headers, final_data
+        for res in results:
+            # Ensure all values are strings or numbers suitable for Redis
+            # Redis streams store field-value pairs.
+            # We can store the whole dict as fields.
+            try:
+                # Convert dict to flat key-value pairs for xadd
+                # Note: xadd expects a dictionary mapping field names to values.
+                # Values must be strings or bytes.
+                entry = {}
+                for k, v in res.items():
+                    entry[str(k)] = str(v)
+                
+                pipeline.xadd(stream_key, entry)
+            except Exception as e:
+                logger.error(f"Error preparing result for Redis: {e}")
+        
+        try:
+            pipeline.execute()
+            # logger.info(f"Published {len(results)} inference results to {stream_key}")
+        except Exception as e:
+            logger.error(f"Error publishing inference results to Redis: {e}")
+
 
 if __name__ == '__main__':
     # Example usage:
@@ -216,39 +276,28 @@ if __name__ == '__main__':
                     continue
             
             try:
-                time.sleep(1)
+                time.sleep(2)
                 end_timestamp = time.time()
                 
-                # 1. Fetch picks from the last 10 seconds
-                start_timestamp_picks = end_timestamp - 10
+                # 1. Fetch picks from the last 30 seconds
+                start_timestamp_picks = end_timestamp - 30
                 picks = adapter.get_picks(start_timestamp_picks, end_timestamp)
                 
                 if not picks:
+                    logger.info("No picks found.")
                     continue
 
-                # 2. Extract unique stations from picks
-                target_stations = set()
-                for p in picks:
-                    sta = p.get('station') or p.get('sta')
-                    if sta:
-                        target_stations.add(sta)
-                    else:
-                        logger.warning(f"Could not extract station from pick: {p}")
+                # 2. Extract unique stations from picks (already unique from adapter)
+                target_stations = [p.get('station') for p in picks if p.get('station')]
 
-                logger.info(f"Successfully fetched {len(picks)} picks from {len(target_stations)} unique stations.")
-
-                if not target_stations:
-                    logger.warning("No valid stations extracted from picks.")
-                    continue
-
-                logger.info(f"Found stations in picks: {target_stations}")
+                logger.info(f"Fetched {len(picks)} picks from {len(target_stations)} stations.")
                 
-                # 3. Fetch 30 seconds of wave data for these stations (Optimized)
+                # 3. Fetch 30 seconds of wave data for these stations
                 start_timestamp_wave = end_timestamp - 30
                 
                 fetch_start = time.time()
-                headers, data_matrix = adapter.fetch_station_waves_optimized(
-                    list(target_stations), 
+                headers, data_matrix = adapter.get_waveforms_bulk(
+                    target_stations, 
                     start_timestamp_wave, 
                     end_timestamp,
                     channels=['HLZ', 'HLN', 'HLE']
